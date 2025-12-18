@@ -1,0 +1,11 @@
+{
+  "target": "max_price_inr",
+  "task": "regression",
+  "features": [
+    "category",
+    "location",
+    "crop_name",
+    "year",
+    "min_price_inr"
+  ]
+}
