@@ -1,6 +1,6 @@
 {
-  "target": "SalePrice",
-  "task": "regression",
+  "target": "GarageType",
+  "task": "classification",
   "features": [
     "Id",
     "MSSubClass",
@@ -8,7 +8,6 @@
     "LotFrontage",
     "LotArea",
     "Street",
-    "Alley",
     "LotShape",
     "LandContour",
     "Utilities",
@@ -59,9 +58,6 @@
     "TotRmsAbvGrd",
     "Functional",
     "Fireplaces",
-    "FireplaceQu",
-    "GarageType",
-    "GarageYrBlt",
     "GarageFinish",
     "GarageCars",
     "GarageArea",
@@ -74,13 +70,19 @@
     "3SsnPorch",
     "ScreenPorch",
     "PoolArea",
-    "PoolQC",
-    "Fence",
-    "MiscFeature",
     "MiscVal",
     "MoSold",
     "YrSold",
     "SaleType",
-    "SaleCondition"
+    "SaleCondition",
+    "SalePrice"
+  ],
+  "top_features": [
+    "YearBuilt",
+    "GarageFinish",
+    "SalePrice",
+    "GarageArea",
+    "GarageCars",
+    "TotalBsmtSF"
   ]
 }

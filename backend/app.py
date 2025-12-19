@@ -1,10 +1,7 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-import os
-import json
-import math
-import base64
+import os, json, math, base64
 from io import BytesIO
 
 import pandas as pd
@@ -19,7 +16,6 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
-
 
 # =====================================================
 # APP SETUP
@@ -36,13 +32,11 @@ app.add_middleware(
 BASE_DATA_DIR = "data/datasets"
 os.makedirs(BASE_DATA_DIR, exist_ok=True)
 
-
 # =====================================================
-# UTILS (DO NOT TOUCH)
+# UTILS
 # =====================================================
 def dataset_dir(dataset_id: str) -> str:
     return os.path.join(BASE_DATA_DIR, dataset_id)
-
 
 def load_df(dataset_id: str) -> pd.DataFrame:
     path = os.path.join(dataset_dir(dataset_id), "raw.csv")
@@ -50,29 +44,21 @@ def load_df(dataset_id: str) -> pd.DataFrame:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return pd.read_csv(path)
 
-
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-
     for col in df.columns:
         if df[col].dtype == "object":
             df[col] = df[col].astype(str).str.strip()
-
-        # try numeric conversion safely
         df[col] = pd.to_numeric(df[col], errors="ignore")
-
     return df
 
-
 def safe_json(val):
-    if isinstance(val, float):
-        if math.isnan(val) or math.isinf(val):
-            return None
+    if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+        return None
     return val
 
-
 # =====================================================
-# UPLOAD (DAY 1)
+# UPLOAD (DAY-1)
 # =====================================================
 @app.post("/upload")
 async def upload_csv(file: UploadFile = File(...)):
@@ -102,7 +88,6 @@ async def upload_csv(file: UploadFile = File(...)):
         "preview": df.head(5).to_dict(orient="records")
     }
 
-
 # =====================================================
 # SCHEMA
 # =====================================================
@@ -117,120 +102,108 @@ def get_schema(dataset_id: str):
 
     return {"status": "ok", "schema": schema}
 
+# =====================================================
+# META (DAY-7)
+# =====================================================
+@app.get("/meta")
+def get_meta(dataset_id: str):
+    path = os.path.join(dataset_dir(dataset_id), "meta.json")
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Train the model first")
+
+    with open(path) as f:
+        return json.load(f)
 
 # =====================================================
-# EDA (BEFORE + AFTER, OUTLIERS, PLOTS)
+# EDA (DAY-2/3/4)
 # =====================================================
 @app.get("/eda")
 def run_eda(dataset_id: str):
-    df_raw = load_df(dataset_id)
-    df = clean_dataframe(df_raw)
+    df = clean_dataframe(load_df(dataset_id))
 
     missing = df.isnull().sum().to_dict()
     dtypes = {c: str(df[c].dtype) for c in df.columns}
 
-    num_cols = [
-        c for c in df.columns
-        if pd.api.types.is_numeric_dtype(df[c])
-    ]
+    num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
 
-    before_summary = {}
-    after_summary = {}
-    outliers_info = {}
-    before_plots = {}
-    after_plots = {}
+    before_summary, after_summary = {}, {}
+    outliers, plots_before, plots_after = {}, {}, {}
 
     for col in num_cols:
-        series = df[col].dropna()
-        if series.empty:
+        s = df[col].dropna()
+        if s.empty:
             continue
 
-        # BEFORE
-        before_summary[col] = series.describe().to_dict()
+        before_summary[col] = s.describe().to_dict()
 
-        Q1 = series.quantile(0.25)
-        Q3 = series.quantile(0.75)
+        Q1, Q3 = s.quantile(0.25), s.quantile(0.75)
         IQR = Q3 - Q1
+        low, high = Q1 - 1.5 * IQR, Q3 + 1.5 * IQR
 
-        lower = Q1 - 1.5 * IQR
-        upper = Q3 + 1.5 * IQR
-
-        outliers = series[(series < lower) | (series > upper)]
-
-        outliers_info[col] = {
-            "count": int(outliers.count()),
-            "lower_bound": float(lower),
-            "upper_bound": float(upper)
+        outliers[col] = {
+            "count": int(((s < low) | (s > high)).sum()),
+            "lower": float(low),
+            "upper": float(high)
         }
 
-        fig, axes = plt.subplots(1, 2, figsize=(8, 3))
-        series.hist(ax=axes[0], bins=20)
-        axes[0].set_title(f"{col} (Before)")
-        axes[1].boxplot(series, vert=False)
-        axes[1].set_title("Outliers")
-
+        fig, ax = plt.subplots()
+        s.hist(ax=ax)
         buf = BytesIO()
-        plt.tight_layout()
         plt.savefig(buf, format="png")
         plt.close()
-        buf.seek(0)
+        plots_before[col] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
-        before_plots[col] = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
-
-        # AFTER
-        clipped = series.clip(lower, upper)
+        clipped = s.clip(low, high)
         after_summary[col] = clipped.describe().to_dict()
 
-        fig, ax = plt.subplots(figsize=(4, 3))
-        clipped.hist(ax=ax, bins=20)
-        ax.set_title(f"{col} (After)")
-
+        fig, ax = plt.subplots()
+        clipped.hist(ax=ax)
         buf = BytesIO()
         plt.savefig(buf, format="png")
         plt.close()
-        buf.seek(0)
-
-        after_plots[col] = "data:image/png;base64," + base64.b64encode(buf.read()).decode()
+        plots_after[col] = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
     return {
         "status": "ok",
         "eda": {
             "missing": missing,
             "dtypes": dtypes,
-            "before": {
-                "summary": before_summary,
-                "outliers": outliers_info,
-                "plots": before_plots
-            },
-            "after": {
-                "summary": after_summary,
-                "plots": after_plots
-            }
+            "before": {"summary": before_summary, "outliers": outliers, "plots": plots_before},
+            "after": {"summary": after_summary, "plots": plots_after}
         }
     }
 
 # =====================================================
-# TRAIN (DAY 5)
+# TRAIN (DAY-5)
 # =====================================================
 @app.post("/train")
 def train_model(dataset_id: str, target: str):
     df = clean_dataframe(load_df(dataset_id))
 
     if target not in df.columns:
-        raise HTTPException(status_code=400, detail="Invalid target column")
+        raise HTTPException(status_code=400, detail="Invalid target")
 
-    # TARGET MUST NOT HAVE NaN
+    # Drop rows where target is missing
     df = df.dropna(subset=[target])
 
     X = df.drop(columns=[target])
     y = df[target]
 
+    # ---------------- DROP HIGH-NULL / USELESS COLUMNS ----------------
+    DROP_COLS = ["Alley", "PoolQC", "Fence", "MiscFeature", "FireplaceQu", "GarageYrBlt"]
+    X = X.drop(columns=[c for c in DROP_COLS if c in X.columns])
+
+    # ---------------- SPLIT NUM / CAT ----------------
     num_cols = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
-    cat_cols = X.select_dtypes(include=["object", "bool"]).columns.tolist()
+    cat_cols = X.select_dtypes(include=["object"]).columns.tolist()
 
-    for col in cat_cols:
-        X[col] = X[col].astype(str)
+    # Limit high-cardinality categorical columns
+    cat_cols = [c for c in cat_cols if X[c].nunique() <= 20]
 
+    for c in cat_cols:
+        X[c] = X[c].astype(str)
+
+    # ---------------- PREPROCESSOR ----------------
     preprocessor = ColumnTransformer(
         transformers=[
             ("num", SimpleImputer(strategy="median"), num_cols),
@@ -241,11 +214,19 @@ def train_model(dataset_id: str, target: str):
         ]
     )
 
+    # ---------------- MODEL SELECTION ----------------
     if y.dtype == "object" or y.nunique() <= 10:
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
+        model = RandomForestClassifier(
+            n_estimators=200,
+            random_state=42
+        )
         task = "classification"
     else:
-        model = RandomForestRegressor(n_estimators=100, random_state=42)
+        model = RandomForestRegressor(
+            n_estimators=200,
+            max_depth=15,
+            random_state=42
+        )
         task = "regression"
 
     pipeline = Pipeline([
@@ -253,6 +234,7 @@ def train_model(dataset_id: str, target: str):
         ("model", model)
     ])
 
+    # ---------------- TRAIN ----------------
     try:
         pipeline.fit(X, y)
     except Exception as e:
@@ -262,13 +244,52 @@ def train_model(dataset_id: str, target: str):
             "error": str(e)
         }
 
+    # ---------------- FEATURE IMPORTANCE (DAY-7 CORE) ----------------
+    model_step = pipeline.named_steps["model"]
+    top_features = list(X.columns)[:6]  # fallback
+
+    if hasattr(model_step, "feature_importances_"):
+        importances = model_step.feature_importances_
+        prep = pipeline.named_steps["prep"]
+
+        feature_names = []
+
+        # numeric features
+        if "num" in prep.named_transformers_:
+            feature_names.extend(num_cols)
+
+        # categorical (one-hot expanded)
+        if "cat" in prep.named_transformers_:
+            enc = prep.named_transformers_["cat"].named_steps["encoder"]
+            cat_feature_names = enc.get_feature_names_out(cat_cols).tolist()
+            feature_names.extend(cat_feature_names)
+
+        # sort by importance
+        fi = sorted(
+            zip(feature_names, importances),
+            key=lambda x: x[1],
+            reverse=True
+        )
+
+        # map back to ORIGINAL columns
+        top_original_features = []
+        for fname, _ in fi:
+            base = fname.split("_")[0]
+            if base in X.columns and base not in top_original_features:
+                top_original_features.append(base)
+
+        if top_original_features:
+            top_features = top_original_features[:6]
+
+    # ---------------- SAVE ----------------
     dpath = dataset_dir(dataset_id)
     joblib.dump(pipeline, os.path.join(dpath, "model.pkl"))
 
     meta = {
         "target": target,
         "task": task,
-        "features": list(X.columns)
+        "features": list(X.columns),
+        "top_features": top_features
     }
 
     with open(os.path.join(dpath, "meta.json"), "w") as f:
@@ -277,28 +298,21 @@ def train_model(dataset_id: str, target: str):
     return {
         "status": "ok",
         "task": task,
-        "model_saved": True
+        "top_features": top_features
     }
 
 
 # =====================================================
-# PREDICT (DAY 6)
+# PREDICT (DAY-6)
 # =====================================================
 @app.post("/predict")
 def predict(dataset_id: str, input_data: dict):
     model_path = os.path.join(dataset_dir(dataset_id), "model.pkl")
-
     if not os.path.exists(model_path):
         raise HTTPException(status_code=400, detail="Model not trained")
 
     pipeline = joblib.load(model_path)
-
-    df = pd.DataFrame([input_data])
-    df = clean_dataframe(df)
-
+    df = clean_dataframe(pd.DataFrame([input_data]))
     pred = pipeline.predict(df)
 
-    return {
-        "status": "ok",
-        "prediction": safe_json(pred[0])
-    }
+    return {"status": "ok", "prediction": safe_json(pred[0])}

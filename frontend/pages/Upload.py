@@ -6,16 +6,21 @@ API = "http://127.0.0.1:8000"
 st.title("📤 Upload Dataset")
 
 uploaded_file = st.file_uploader(
-    "Upload CSV / Excel file",
+    "Upload CSV / Excel",
     type=["csv", "xlsx", "xls"]
 )
 
 if uploaded_file:
     files = {
-        "file": (uploaded_file.name, uploaded_file.getvalue())
+        "file": (
+            uploaded_file.name,
+            uploaded_file.getvalue(),
+            uploaded_file.type
+        )
     }
 
-    resp = requests.post(f"{API}/upload", files=files)
+    with st.spinner("Uploading..."):
+        resp = requests.post(f"{API}/upload", files=files)
 
     if resp.status_code != 200:
         st.error(resp.text)
@@ -23,20 +28,22 @@ if uploaded_file:
 
     data = resp.json()
 
-    if data.get("status") != "ok":
-        st.error(data)
-        st.stop()
-
-    # ---- SAVE STATE ----
+    # --- SESSION STATE ---
     st.session_state["dataset_id"] = data["dataset_id"]
 
-    st.success("Dataset uploaded successfully")
+    st.success("Upload successful")
+
+    # --- SAFE ACCESS ---
+    columns = data.get("columns", [])
+    preview = data.get("preview", [])
 
     st.write("**Dataset ID:**", data["dataset_id"])
+    st.write("**Total Columns:**", len(columns))
 
-    st.write("**Total Columns:**", len(data["columns"]))
-    st.write("**Column Names:**")
-    st.write(data["columns"])
+    if columns:
+        st.write("**Columns:**")
+        st.write(columns)
 
-    st.subheader("Preview (first 5 rows)")
-    st.dataframe(data["preview"])
+    if preview:
+        st.subheader("Preview (Top 5 rows)")
+        st.dataframe(preview)

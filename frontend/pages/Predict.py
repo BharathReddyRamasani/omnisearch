@@ -3,59 +3,83 @@ import requests
 
 API = "http://127.0.0.1:8000"
 
-st.title("🔮 Predict")
+st.set_page_config(page_title="Predict", layout="wide")
+st.title("🔮 Prediction")
 
+# ---------------- SESSION CHECK ----------------
 if "dataset_id" not in st.session_state:
-    st.warning("Upload & train model first")
+    st.warning("Upload & Train dataset first")
     st.stop()
 
-# ---------------- FETCH SCHEMA ----------------
-schema_resp = requests.get(
-    f"{API}/schema",
-    params={"dataset_id": st.session_state["dataset_id"]}
+dataset_id = st.session_state["dataset_id"]
+
+# ---------------- META ----------------
+meta = requests.get(
+    f"{API}/meta",
+    params={"dataset_id": dataset_id}
+).json()
+
+target = meta["target"]
+task = meta["task"]
+all_features = meta["features"]
+top_features = meta["top_features"]
+
+# ---------------- MODE ----------------
+mode = st.radio(
+    "Prediction Mode",
+    ["Quick Predict (Recommended)", "Advanced Predict"],
+    horizontal=True
 )
 
-if schema_resp.status_code != 200:
-    st.error("Schema not found. Upload dataset again.")
-    st.stop()
+features_to_use = top_features if mode.startswith("Quick") else all_features
 
-schema_json = schema_resp.json()
+# ---------------- SCHEMA (FIXED) ----------------
+schema_resp = requests.get(
+    f"{API}/schema",
+    params={"dataset_id": dataset_id}
+).json()
 
-if schema_json.get("status") != "ok":
-    st.error(schema_json)
-    st.stop()
+schema = schema_resp["schema"]   # ✅ FIX
 
-schema = schema_json["schema"]  # ✅ THIS IS THE FIX
-
-# ---------------- INPUT FORM ----------------
+# ---------------- INPUTS ----------------
 input_data = {}
 
-st.subheader("Enter feature values")
+st.subheader("Provide Inputs")
 
-for col, dtype in schema.items():
+for col in features_to_use:
+    if col == target:
+        continue
 
-    # dtype is STRING now ("int64", "float64", "object")
+    if col not in schema:
+        st.warning(f"Skipping `{col}` (not in schema)")
+        continue
+
+    dtype = schema[col]
+
     if dtype.startswith(("int", "float")):
         input_data[col] = st.number_input(col, value=0.0)
     else:
-        input_data[col] = st.text_input(col)
+        input_data[col] = st.text_input(col, value="")
 
 # ---------------- PREDICT ----------------
-if st.button("Predict"):
+if st.button("🚀 Predict", use_container_width=True):
     resp = requests.post(
         f"{API}/predict",
-        params={"dataset_id": st.session_state["dataset_id"]},
-        json=input_data
+        json={
+            "dataset_id": dataset_id,
+            "input_data": input_data
+        }
     )
-
-    if resp.status_code != 200:
-        st.error(resp.text)
-        st.stop()
 
     result = resp.json()
 
-    if result.get("status") != "ok":
+    if "prediction" not in result:
         st.error(result)
+        st.stop()
+
+    st.success("Prediction Successful")
+
+    if task == "classification":
+        st.metric("Predicted Class", result["prediction"])
     else:
-        st.success("Prediction Result")
-        st.write(result["prediction"])
+        st.metric("Predicted Value", round(float(result["prediction"]), 2))
