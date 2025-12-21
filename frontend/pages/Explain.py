@@ -15,15 +15,25 @@ meta = requests.get(
 ).json()
 
 top_features = meta.get("top_features", [])
+target = meta.get("target")
+task = meta.get("task")
+
+st.markdown(f"### Target: `{target}`")
+st.markdown(f"### Task Type: `{task}`")
 
 if not top_features:
-    st.info("No explainability available.")
+    st.info("No explainability available for this model.")
     st.stop()
 
-st.subheader("Top Influencing Features")
 df = pd.DataFrame({
     "Feature": top_features,
-    "Importance Rank": list(range(1, len(top_features)+1))
+    "Importance Rank": range(1, len(top_features) + 1)
 })
 
+st.subheader("Top Influencing Features")
 st.dataframe(df)
+
+st.info(
+    "These features were selected based on model-derived importance, "
+    "not manual selection."
+)
