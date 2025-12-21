@@ -1,0 +1,6 @@
+{
+  "RecordID": "int64",
+  "Restaurant Name": "object",
+  "City": "object",
+  "Entr\u00e9e Description": "object"
+}

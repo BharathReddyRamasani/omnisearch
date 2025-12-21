@@ -1,0 +1,5 @@
+{
+  "Toaster ID Number": "int64",
+  "Type": "object",
+  "Cost": "object"
+}

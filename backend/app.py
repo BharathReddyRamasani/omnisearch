@@ -16,6 +16,13 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score,
+    confusion_matrix,
+    mean_squared_error, mean_absolute_error, r2_score
+)
 
 # =====================================================
 # APP SETUP
@@ -49,7 +56,10 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
         if df[col].dtype == "object":
             df[col] = df[col].astype(str).str.strip()
-        df[col] = pd.to_numeric(df[col], errors="ignore")
+        try:
+            df[col] = pd.to_numeric(df[col])
+        except Exception:
+            pass
     return df
 
 def safe_json(val):
@@ -66,20 +76,16 @@ async def upload_csv(file: UploadFile = File(...)):
     dpath = dataset_dir(dataset_id)
     os.makedirs(dpath, exist_ok=True)
 
-    try:
-        if file.filename.endswith((".xlsx", ".xls")):
-            df = pd.read_excel(file.file)
-        else:
-            df = pd.read_csv(file.file)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    if file.filename.endswith((".xlsx", ".xls")):
+        df = pd.read_excel(file.file)
+    else:
+        df = pd.read_csv(file.file)
 
     df = clean_dataframe(df)
     df.to_csv(os.path.join(dpath, "raw.csv"), index=False)
 
     schema = {c: str(df[c].dtype) for c in df.columns}
-    with open(os.path.join(dpath, "schema.json"), "w") as f:
-        json.dump(schema, f, indent=2)
+    json.dump(schema, open(os.path.join(dpath, "schema.json"), "w"), indent=2)
 
     return {
         "status": "ok",
@@ -96,23 +102,17 @@ def get_schema(dataset_id: str):
     path = os.path.join(dataset_dir(dataset_id), "schema.json")
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Schema not found")
-
-    with open(path) as f:
-        schema = json.load(f)
-
-    return {"status": "ok", "schema": schema}
+    return {"status": "ok", "schema": json.load(open(path))}
 
 # =====================================================
-# META (DAY-7)
+# META
 # =====================================================
 @app.get("/meta")
 def get_meta(dataset_id: str):
     path = os.path.join(dataset_dir(dataset_id), "meta.json")
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Train the model first")
-
-    with open(path) as f:
-        return json.load(f)
+    return json.load(open(path))
 
 # =====================================================
 # EDA (DAY-2/3/4)
@@ -121,13 +121,10 @@ def get_meta(dataset_id: str):
 def run_eda(dataset_id: str):
     df = clean_dataframe(load_df(dataset_id))
 
-    missing = df.isnull().sum().to_dict()
-    dtypes = {c: str(df[c].dtype) for c in df.columns}
-
-    num_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+    num_cols = df.select_dtypes(include=["int64", "float64"]).columns.tolist()
 
     before_summary, after_summary = {}, {}
-    outliers, plots_before, plots_after = {}, {}, {}
+    plots_before, plots_after, outliers = {}, {}, {}
 
     for col in num_cols:
         s = df[col].dropna()
@@ -136,9 +133,9 @@ def run_eda(dataset_id: str):
 
         before_summary[col] = s.describe().to_dict()
 
-        Q1, Q3 = s.quantile(0.25), s.quantile(0.75)
-        IQR = Q3 - Q1
-        low, high = Q1 - 1.5 * IQR, Q3 + 1.5 * IQR
+        q1, q3 = s.quantile(0.25), s.quantile(0.75)
+        iqr = q3 - q1
+        low, high = q1 - 1.5 * iqr, q3 + 1.5 * iqr
 
         outliers[col] = {
             "count": int(((s < low) | (s > high)).sum()),
@@ -166,15 +163,22 @@ def run_eda(dataset_id: str):
     return {
         "status": "ok",
         "eda": {
-            "missing": missing,
-            "dtypes": dtypes,
-            "before": {"summary": before_summary, "outliers": outliers, "plots": plots_before},
-            "after": {"summary": after_summary, "plots": plots_after}
+            "missing": df.isnull().sum().to_dict(),
+            "dtypes": {c: str(df[c].dtype) for c in df.columns},
+            "before": {
+                "summary": before_summary,
+                "outliers": outliers,
+                "plots": plots_before
+            },
+            "after": {
+                "summary": after_summary,
+                "plots": plots_after
+            }
         }
     }
 
 # =====================================================
-# TRAIN (DAY-5)
+# TRAIN + EVALUATE (DAY-5 → DAY-9)
 # =====================================================
 @app.post("/train")
 def train_model(dataset_id: str, target: str):
@@ -183,136 +187,146 @@ def train_model(dataset_id: str, target: str):
     if target not in df.columns:
         raise HTTPException(status_code=400, detail="Invalid target")
 
-    # Drop rows where target is missing
     df = df.dropna(subset=[target])
-
     X = df.drop(columns=[target])
     y = df[target]
 
-    # ---------------- DROP HIGH-NULL / USELESS COLUMNS ----------------
     DROP_COLS = ["Alley", "PoolQC", "Fence", "MiscFeature", "FireplaceQu", "GarageYrBlt"]
     X = X.drop(columns=[c for c in DROP_COLS if c in X.columns])
 
-    # ---------------- SPLIT NUM / CAT ----------------
     num_cols = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
     cat_cols = X.select_dtypes(include=["object"]).columns.tolist()
-
-    # Limit high-cardinality categorical columns
     cat_cols = [c for c in cat_cols if X[c].nunique() <= 20]
 
     for c in cat_cols:
         X[c] = X[c].astype(str)
 
-    # ---------------- PREPROCESSOR ----------------
-    preprocessor = ColumnTransformer(
-        transformers=[
-            ("num", SimpleImputer(strategy="median"), num_cols),
-            ("cat", Pipeline([
-                ("imputer", SimpleImputer(strategy="most_frequent")),
-                ("encoder", OneHotEncoder(handle_unknown="ignore"))
-            ]), cat_cols)
-        ]
-    )
+    features = num_cols + cat_cols
 
-    # ---------------- MODEL SELECTION ----------------
-    if y.dtype == "object" or y.nunique() <= 10:
-        model = RandomForestClassifier(
-            n_estimators=200,
-            random_state=42
-        )
-        task = "classification"
-    else:
-        model = RandomForestRegressor(
-            n_estimators=200,
-            max_depth=15,
-            random_state=42
-        )
-        task = "regression"
-
-    pipeline = Pipeline([
-        ("prep", preprocessor),
-        ("model", model)
+    preprocessor = ColumnTransformer([
+        ("num", SimpleImputer(strategy="median"), num_cols),
+        ("cat", Pipeline([
+            ("imputer", SimpleImputer(strategy="most_frequent")),
+            ("encoder", OneHotEncoder(handle_unknown="ignore"))
+        ]), cat_cols)
     ])
 
-    # ---------------- TRAIN ----------------
-    try:
-        pipeline.fit(X, y)
-    except Exception as e:
-        return {
-            "status": "failed",
-            "stage": "training",
-            "error": str(e)
+    # ---------------- TASK TYPE ----------------
+    if y.dtype == "object" or y.nunique() <= 10:
+        task = "classification"
+        candidates = [
+            ("LogisticRegression", LogisticRegression(max_iter=1000)),
+            ("RandomForest", RandomForestClassifier(n_estimators=200, random_state=42))
+        ]
+    else:
+        task = "regression"
+        candidates = [
+            ("LinearRegression", LinearRegression()),
+            ("RandomForest", RandomForestRegressor(n_estimators=200, max_depth=15, random_state=42))
+        ]
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X[features], y, test_size=0.2, random_state=42
+    )
+
+    best_model, best_score, best_name = None, -1e9, None
+
+    for name, model in candidates:
+        pipe = Pipeline([("prep", preprocessor), ("model", model)])
+        pipe.fit(X_train, y_train)
+        preds = pipe.predict(X_test)
+
+        score = accuracy_score(y_test, preds) if task == "classification" else r2_score(y_test, preds)
+
+        if score > best_score:
+            best_score = score
+            best_model = pipe
+            best_name = name
+
+    preds = best_model.predict(X_test)
+
+    # ---------------- METRICS ----------------
+    if task == "classification":
+        metrics = {
+            "accuracy": accuracy_score(y_test, preds),
+            "precision": precision_score(y_test, preds, average="weighted", zero_division=0),
+            "recall": recall_score(y_test, preds, average="weighted", zero_division=0),
+            "confusion_matrix": confusion_matrix(y_test, preds).tolist()
+        }
+    else:
+        metrics = {
+            "rmse": mean_squared_error(y_test, preds, squared=False),
+            "mae": mean_absolute_error(y_test, preds),
+            "r2": r2_score(y_test, preds)
         }
 
-    # ---------------- FEATURE IMPORTANCE (DAY-7 CORE) ----------------
-    model_step = pipeline.named_steps["model"]
-    top_features = list(X.columns)[:6]  # fallback
+    # ---------------- FEATURE IMPORTANCE ----------------
+    top_features = features[:6]
+    model_step = best_model.named_steps["model"]
 
     if hasattr(model_step, "feature_importances_"):
         importances = model_step.feature_importances_
-        prep = pipeline.named_steps["prep"]
+        names = num_cols[:]
 
-        feature_names = []
+        if cat_cols:
+            enc = best_model.named_steps["prep"].named_transformers_["cat"].named_steps["encoder"]
+            names.extend(enc.get_feature_names_out(cat_cols))
 
-        # numeric features
-        if "num" in prep.named_transformers_:
-            feature_names.extend(num_cols)
-
-        # categorical (one-hot expanded)
-        if "cat" in prep.named_transformers_:
-            enc = prep.named_transformers_["cat"].named_steps["encoder"]
-            cat_feature_names = enc.get_feature_names_out(cat_cols).tolist()
-            feature_names.extend(cat_feature_names)
-
-        # sort by importance
-        fi = sorted(
-            zip(feature_names, importances),
-            key=lambda x: x[1],
-            reverse=True
-        )
-
-        # map back to ORIGINAL columns
-        top_original_features = []
-        for fname, _ in fi:
+        ranked = sorted(zip(names, importances), key=lambda x: x[1], reverse=True)
+        mapped = []
+        for fname, _ in ranked:
             base = fname.split("_")[0]
-            if base in X.columns and base not in top_original_features:
-                top_original_features.append(base)
+            if base in features and base not in mapped:
+                mapped.append(base)
+        if mapped:
+            top_features = mapped[:6]
 
-        if top_original_features:
-            top_features = top_original_features[:6]
-
-    # ---------------- SAVE ----------------
+    # ---------------- MODEL VERSIONING ----------------
     dpath = dataset_dir(dataset_id)
-    joblib.dump(pipeline, os.path.join(dpath, "model.pkl"))
+    meta_path = os.path.join(dpath, "meta.json")
+
+    version = 1
+    if os.path.exists(meta_path):
+        old_meta = json.load(open(meta_path))
+        version = old_meta.get("current_version", 1) + 1
+
+    model_name = f"model_v{version}.pkl"
+    joblib.dump(best_model, os.path.join(dpath, model_name))
 
     meta = {
         "target": target,
         "task": task,
-        "features": list(X.columns),
-        "top_features": top_features
+        "features": features,
+        "top_features": top_features,
+        "best_model": best_name,
+        "metrics": metrics,
+        "current_version": version,
+        "model_file": model_name
     }
 
-    with open(os.path.join(dpath, "meta.json"), "w") as f:
+    with open(meta_path, "w") as f:
         json.dump(meta, f, indent=2)
 
     return {
         "status": "ok",
         "task": task,
-        "top_features": top_features
+        "best_model": best_name,
+        "current_version": version,
+        "metrics": metrics
     }
 
-
 # =====================================================
-# PREDICT (DAY-6)
+# PREDICT (DAY-6 / DAY-7)
 # =====================================================
 @app.post("/predict")
 def predict(dataset_id: str, input_data: dict):
-    model_path = os.path.join(dataset_dir(dataset_id), "model.pkl")
-    if not os.path.exists(model_path):
-        raise HTTPException(status_code=400, detail="Model not trained")
+    meta = json.load(open(os.path.join(dataset_dir(dataset_id), "meta.json")))
+    model = joblib.load(os.path.join(dataset_dir(dataset_id), "model.pkl"))
 
-    pipeline = joblib.load(model_path)
+    for col in meta["features"]:
+        input_data.setdefault(col, None)
+
     df = clean_dataframe(pd.DataFrame([input_data]))
-    pred = pipeline.predict(df)
+    pred = model.predict(df)
 
     return {"status": "ok", "prediction": safe_json(pred[0])}

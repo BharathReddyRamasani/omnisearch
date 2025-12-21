@@ -13,12 +13,13 @@ if "dataset_id" not in st.session_state:
 
 dataset_id = st.session_state["dataset_id"]
 
-# ---------------- META ----------------
-meta = requests.get(
-    f"{API}/meta",
-    params={"dataset_id": dataset_id}
-).json()
+# ---------------- LOAD META ----------------
+meta_resp = requests.get(f"{API}/meta", params={"dataset_id": dataset_id})
+if meta_resp.status_code != 200:
+    st.error("Train the model first")
+    st.stop()
 
+meta = meta_resp.json()
 target = meta["target"]
 task = meta["task"]
 all_features = meta["features"]
@@ -33,33 +34,26 @@ mode = st.radio(
 
 features_to_use = top_features if mode.startswith("Quick") else all_features
 
-# ---------------- SCHEMA (FIXED) ----------------
-schema_resp = requests.get(
-    f"{API}/schema",
-    params={"dataset_id": dataset_id}
-).json()
+# ---------------- LOAD SCHEMA ----------------
+schema_resp = requests.get(f"{API}/schema", params={"dataset_id": dataset_id})
+schema = schema_resp.json()["schema"]
 
-schema = schema_resp["schema"]   # ✅ FIX
-
-# ---------------- INPUTS ----------------
+# ---------------- INPUT FORM ----------------
+st.subheader("Provide Inputs")
 input_data = {}
 
-st.subheader("Provide Inputs")
-
 for col in features_to_use:
-    if col == target:
-        continue
-
-    if col not in schema:
-        st.warning(f"Skipping `{col}` (not in schema)")
-        continue
-
-    dtype = schema[col]
+    dtype = schema.get(col, "object")  # fallback safety
 
     if dtype.startswith(("int", "float")):
         input_data[col] = st.number_input(col, value=0.0)
     else:
         input_data[col] = st.text_input(col, value="")
+
+st.caption(
+    "Quick Predict uses the most impactful features for this target. "
+    "Advanced Predict uses all features used during training."
+)
 
 # ---------------- PREDICT ----------------
 if st.button("🚀 Predict", use_container_width=True):
