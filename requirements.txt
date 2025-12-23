@@ -1,0 +1,35 @@
+# Backend (FastAPI)
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+python-multipart==0.0.9
+
+# Data/ML
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.1
+joblib==1.4.2
+charset-normalizer==3.3.2
+
+# Viz
+matplotlib==3.9.2
+plotly==5.24.1
+seaborn==0.13.2
+
+# Frontend
+streamlit==1.38.0
+requests==2.32.3
+
+# Production
+python-dotenv==1.0.1
+pydantic-settings==2.5.2
+
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+streamlit==1.38.0
+pandas==2.2.2
+numpy==1.26.4
+scikit-learn==1.5.1
+plotly==5.24.1
+requests==2.32.3
+joblib==1.4.2
+python-multipart==0.0.9

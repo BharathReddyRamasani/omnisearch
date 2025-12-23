@@ -1,5 +1,5 @@
 {
-  "target": "RoofStyle",
+  "target": "SaleType",
   "task": "classification",
   "features": [
     "Id",
@@ -27,6 +27,7 @@
     "KitchenAbvGr",
     "TotRmsAbvGrd",
     "Fireplaces",
+    "GarageYrBlt",
     "GarageCars",
     "GarageArea",
     "WoodDeckSF",
@@ -41,6 +42,7 @@
     "SalePrice",
     "MSZoning",
     "Street",
+    "Alley",
     "LotShape",
     "LandContour",
     "Utilities",
@@ -50,6 +52,7 @@
     "Condition2",
     "BldgType",
     "HouseStyle",
+    "RoofStyle",
     "RoofMatl",
     "Exterior1st",
     "Exterior2nd",
@@ -68,116 +71,151 @@
     "Electrical",
     "KitchenQual",
     "Functional",
+    "FireplaceQu",
     "GarageType",
     "GarageFinish",
     "GarageQual",
     "GarageCond",
     "PavedDrive",
-    "SaleType",
+    "PoolQC",
+    "Fence",
+    "MiscFeature",
     "SaleCondition"
   ],
   "top_features": [
+    "GarageYrBlt",
+    "YearRemodAdd",
     "YearBuilt",
-    "LotArea",
-    "2ndFlrSF",
-    "GarageArea",
-    "GrLivArea",
-    "TotRmsAbvGrd"
+    "SalePrice",
+    "BsmtUnfSF",
+    "TotalBsmtSF"
   ],
   "best_model": "RandomForestClassifier",
-  "model_reason": "Many classes or potential imbalance \u2192 Random Forest",
-  "current_version": 9,
-  "model_file": "model_v9.pkl",
+  "model_reason": "Many classes - Random Forest",
+  "current_version": 12,
+  "model_file": "model_v12.pkl",
   "metrics": {
-    "accuracy": 0.8047945205479452,
-    "precision": 0.7658983374331065,
-    "recall": 0.8047945205479452,
-    "confusion_matrix": [
-      [
-        0,
-        3,
-        0,
-        0,
-        0,
-        0
-      ],
-      [
-        0,
-        220,
-        0,
-        8,
-        0,
-        0
-      ],
-      [
-        0,
-        2,
-        0,
-        0,
-        0,
-        0
-      ],
-      [
-        0,
-        42,
-        0,
-        15,
-        0,
-        0
-      ],
-      [
-        0,
-        1,
-        0,
-        0,
-        0,
-        0
-      ],
-      [
-        0,
-        1,
-        0,
-        0,
-        0,
-        0
+    "test_metrics": {
+      "accuracy": 0.9417808219178082,
+      "precision": 0.8935212143889864,
+      "recall": 0.9417808219178082,
+      "confusion_matrix": [
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          9
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          1,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          22,
+          0,
+          2
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          1
+        ],
+        [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          0,
+          253
+        ]
       ]
+    },
+    "cv_scores": [
+      0.9452054794520548,
+      0.952054794520548,
+      0.9486301369863014,
+      0.952054794520548,
+      0.9452054794520548
     ],
-    "cv": {
-      "scores": [
-        0.7945205479452054,
-        0.8253424657534246,
-        0.8047945205479452,
-        0.8116438356164384,
-        0.8013698630136986
-      ],
-      "mean": 0.8075342465753425,
-      "std": 0.010477437356697508
-    }
+    "cv_mean": 0.9486301369863014,
+    "cv_std": 0.0030631068184928745
   },
   "explainability": [
     {
+      "feature": "GarageYrBlt",
+      "importance": 0.0378
+    },
+    {
+      "feature": "YearRemodAdd",
+      "importance": 0.0354
+    },
+    {
       "feature": "YearBuilt",
-      "importance": 0.0446
+      "importance": 0.0345
     },
     {
-      "feature": "LotArea",
-      "importance": 0.0363
+      "feature": "SalePrice",
+      "importance": 0.0291
     },
     {
-      "feature": "2ndFlrSF",
-      "importance": 0.0319
+      "feature": "BsmtUnfSF",
+      "importance": 0.0285
     },
     {
-      "feature": "GarageArea",
-      "importance": 0.0311
-    },
-    {
-      "feature": "GrLivArea",
-      "importance": 0.0276
-    },
-    {
-      "feature": "TotRmsAbvGrd",
-      "importance": 0.0274
+      "feature": "TotalBsmtSF",
+      "importance": 0.0268
     }
   ]
 }

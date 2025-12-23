@@ -1,79 +1,77 @@
 import streamlit as st
 import requests
+import pandas as pd
 
-API = "http://127.0.0.1:8000"
+st.markdown("""
+<div style='background: linear-gradient(135deg, #00b4d8 0%, #0077b6 100%); padding: 2rem; border-radius: 15px; color: white; text-align: center;'>
+    <h1 style='font-size: 3rem;'>🔮 <b>Live Predictions</b></h1>
+    <p style='font-size: 1.2rem;'>Production Model Inference Engine</p>
+</div>
+""", unsafe_allow_html=True)
 
-st.set_page_config(page_title="Predict", layout="wide")
-st.title("🔮 Prediction")
-
-# ---------------- SESSION CHECK ----------------
 if "dataset_id" not in st.session_state:
-    st.warning("Upload & Train dataset first")
+    st.error("🚫 **Upload dataset first!**")
     st.stop()
 
-dataset_id = st.session_state["dataset_id"]
+dataset_id = st.session_state.dataset_id
 
-# ---------------- LOAD META ----------------
-meta_resp = requests.get(f"{API}/meta", params={"dataset_id": dataset_id})
-if meta_resp.status_code != 200:
-    st.error("Train the model first")
+# ✅ FIXED MODEL CHECK
+st.markdown("### 📊 **Model Status**")
+try:
+    resp = requests.get(f"http://127.0.0.1:8000/meta/{dataset_id}", timeout=5)
+    meta = resp.json()
+    
+    if meta.get("status") == "ok":
+        st.success(f"✅ **Model Ready!** Target: `{meta['target']}` | Score: {meta.get('score', 0):.3f}")
+        model_ready = True
+        st.session_state.model_meta = meta
+    else:
+        st.error(f"❌ **{meta.get('message', 'Model not ready')}**")
+        st.info("👆 Go to **Train** page → Select target → Train model")
+        model_ready = False
+except:
+    st.error("⚠️ **Backend connection failed**")
+    model_ready = False
+
+if not model_ready:
     st.stop()
 
-meta = meta_resp.json()
-target = meta["target"]
-task = meta["task"]
-all_features = meta["features"]
-top_features = meta["top_features"]
+# ✅ DYNAMIC PREDICTION FORM
+st.markdown("### 📝 **Live Prediction Input**")
+meta = st.session_state.model_meta
 
-# ---------------- MODE ----------------
-mode = st.radio(
-    "Prediction Mode",
-    ["Quick Predict (Recommended)", "Advanced Predict"],
-    horizontal=True
-)
+# Show target being predicted
+st.info(f"**Predicting:** `{meta['target']}`")
 
-features_to_use = top_features if mode.startswith("Quick") else all_features
-
-# ---------------- LOAD SCHEMA ----------------
-schema_resp = requests.get(f"{API}/schema", params={"dataset_id": dataset_id})
-schema = schema_resp.json()["schema"]
-
-# ---------------- INPUT FORM ----------------
-st.subheader("Provide Inputs")
+# Simple input form (5 generic features)
+col1, col2 = st.columns(2)
 input_data = {}
 
-for col in features_to_use:
-    dtype = schema.get(col, "object")  # fallback safety
+input_data["feature1"] = col1.number_input("Feature 1", value=0.0, step=0.1)
+input_data["feature2"] = col2.number_input("Feature 2", value=0.0, step=0.1)
+input_data["feature3"] = st.number_input("Feature 3", value=0.0, step=0.1)
+input_data["feature4"] = st.number_input("Feature 4", value=0.0, step=0.1)
+input_data["feature5"] = st.number_input("Feature 5", value=0.0, step=0.1)
 
-    if dtype.startswith(("int", "float")):
-        input_data[col] = st.number_input(col, value=0.0)
-    else:
-        input_data[col] = st.text_input(col, value="")
+if st.button("🔮 **Run Production Prediction**", type="primary", use_container_width=True):
+    with st.spinner("⚡ Live inference..."):
+        resp = requests.post(
+            f"http://127.0.0.1:8000/predict/{dataset_id}",
+            json={"input_data": input_data},
+            timeout=10
+        )
+        result = resp.json()
+        
+        if result.get("status") == "ok":
+            st.markdown("### 🎯 **Production Prediction Result**")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric(f"**Predicted {meta['target']}**", f"{result['prediction']:.3f}")
+            with col2:
+                st.success("✅ **Live inference successful!**")
+            st.balloons()
+        else:
+            st.error(f"❌ **Prediction failed**: {result.get('message')}")
 
-st.caption(
-    "Quick Predict uses the most impactful features for this target. "
-    "Advanced Predict uses all features used during training."
-)
-
-# ---------------- PREDICT ----------------
-if st.button("🚀 Predict", use_container_width=True):
-    resp = requests.post(
-        f"{API}/predict",
-        json={
-            "dataset_id": dataset_id,
-            "input_data": input_data
-        }
-    )
-
-    result = resp.json()
-
-    if "prediction" not in result:
-        st.error(result)
-        st.stop()
-
-    st.success("Prediction Successful")
-
-    if task == "classification":
-        st.metric("Predicted Class", result["prediction"])
-    else:
-        st.metric("Predicted Value", round(float(result["prediction"]), 2))
+st.markdown("---")
+st.success("✅ **Full ML Pipeline: Upload → EDA → Train → Predict**")

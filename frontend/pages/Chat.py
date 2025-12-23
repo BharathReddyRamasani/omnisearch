@@ -1,31 +1,31 @@
 import streamlit as st
-import pandas as pd
+import requests
 
-st.title("💬 Ask Your Data")
+API = "http://127.0.0.1:8000"
+st.title("💬 Chat With Your Data")
 
-if "dataset_id" not in st.session_state:
+if 'dataset_id' not in st.session_state:
+    st.warning("Upload dataset first")
     st.stop()
 
-df = pd.read_csv(
-    f"data/datasets/{st.session_state['dataset_id']}/raw.csv"
-)
+dataset_id = st.session_state.dataset_id
 
-question = st.text_input("Ask a question about your dataset")
+st.info("🤖 Ask about: model accuracy, top features, performance, or model selection")
+
+question = st.text_input("Ask a question about your dataset:")
 
 if question:
     q = question.lower()
-
     if "average" in q or "mean" in q:
-        st.write(df.describe())
-
+        st.write("📊 **Averages**: Check EDA page for detailed statistics")
     elif "missing" in q or "null" in q:
-        st.write(df.isnull().sum())
-
+        st.write("🔍 **Missing Values**: See EDA report for missing value counts")
     elif "top" in q:
-        st.write(df.head())
-
+        st.write("⭐ **Top Features**: Check Explainability page")
     else:
-        st.info(
-            "I can answer questions about averages, missing values, "
-            "top rows, and distributions."
-        )
+        resp = requests.post(f"{API}/chat/{dataset_id}", json={"question": question})
+        result = resp.json()
+        st.write(f"**🤖 Answer**: {result.get('answer', 'No answer available')}")
+        
+        if "data" in result:
+            st.json(result["data"])
