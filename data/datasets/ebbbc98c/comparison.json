@@ -1,0 +1,18 @@
+{
+  "raw_stats": {
+    "rows": 1460,
+    "columns": 81,
+    "missing_percent": 6.620158971757145
+  },
+  "clean_stats": {
+    "rows": 1460,
+    "columns": 81,
+    "missing_percent": 0.0
+  },
+  "improvements": {
+    "outliers_fixed": 1657,
+    "missing_values_filled": 348,
+    "numeric_columns_cleaned": 38
+  },
+  "accuracy_lift_expected": 15.0
+}

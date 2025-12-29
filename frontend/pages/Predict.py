@@ -75,3 +75,19 @@ if st.button("🔮 **Run Production Prediction**", type="primary", use_container
 
 st.markdown("---")
 st.success("✅ **Full ML Pipeline: Upload → EDA → Train → Predict**")
+
+# frontend/Predict.py - QUICK COPY
+st.title("🔮 Live Predictions")
+if st.session_state.get("model_trained"):
+    meta = requests.get(f"http://127.0.0.1:8000/meta/{dataset_id}").json()
+    st.metric("🏆 Best Model", meta.get("best_model"))
+    
+    # Dynamic form from features
+    input_data = {}
+    for feature in meta.get("features", [])[:5]:  # Top 5
+        input_data[feature] = st.number_input(feature)
+    
+    if st.button("🔮 Predict"):
+        resp = requests.post(f"http://127.0.0.1:8000/predict/{dataset_id}", 
+                           json={"input_data": input_data})
+        st.success(f"🎯 **{meta['target']}:** {resp.json()['prediction']}")

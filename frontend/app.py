@@ -9,3 +9,6 @@ if uploaded_file:
     st.session_state.dataset_id = uploaded_file.name.replace(".csv", "")
     st.success(f"✅ **{uploaded_file.name} loaded instantly!**")
     st.balloons()
+
+if "dataset_id" not in st.session_state:
+    st.session_state.dataset_id = "your_dataset_id_here"
