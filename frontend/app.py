@@ -1,14 +1,14 @@
 import streamlit as st
 
-st.set_page_config(layout="wide")
-st.title("🚀 **OmniSearch AI**")
+st.set_page_config(
+    page_title="OmniSearch AI",
+    layout="wide"
+)
 
-# FAST UPLOAD (1 click)
-uploaded_file = st.file_uploader("📁 Drop CSV", type="csv")
-if uploaded_file:
-    st.session_state.dataset_id = uploaded_file.name.replace(".csv", "")
-    st.success(f"✅ **{uploaded_file.name} loaded instantly!**")
-    st.balloons()
+st.title("🚀 OmniSearch AI")
+st.caption("EDA • ETL • AutoML • Prediction")
 
 if "dataset_id" not in st.session_state:
-    st.session_state.dataset_id = "your_dataset_id_here"
+    st.session_state.dataset_id = None
+
+st.info("Use the sidebar to navigate through the workflow.")

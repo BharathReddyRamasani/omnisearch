@@ -1,0 +1,14 @@
+{
+  "raw_stats": {
+    "rows": 1460,
+    "missing_total": 7829
+  },
+  "clean_stats": {
+    "rows": 1460,
+    "missing_total": 0
+  },
+  "improvements": {
+    "missing_values_filled": 7829
+  },
+  "accuracy_lift_expected": 15
+}

@@ -1,129 +1,117 @@
-# frontend/ETL.py - ETL DASHBOARD WITH DOWNLOADS + COMPARISON
 import streamlit as st
 import requests
-import pandas as pd
 
-# Your API config
-API = "http://localhost:8000"
-dataset_id = st.session_state.get("dataset_id", None)
+API = "http://127.0.0.1:8000/api"
 
-st.set_page_config(layout="wide", page_title="ETL Pipeline")
-st.title("🧹 ETL Pipeline - Raw vs Clean")
+st.set_page_config(
+    layout="wide",
+    page_title="OmniSearch AI — Enterprise ETL"
+)
 
-# ------------------ CHECK DATASET ------------------
+st.markdown("## 🧹 Enterprise ETL Pipeline")
+
+# ---------------- DATASET VALIDATION ----------------
+dataset_id = st.session_state.get("dataset_id")
+
 if not dataset_id:
-    st.warning("👈 **Upload dataset first** (Home page)")
+    st.error("No dataset loaded. Upload a dataset first.")
     st.stop()
 
-st.success(f"**Active Dataset:** `{dataset_id}`")
+st.success(f"Active Dataset: `{dataset_id}`")
 
-# ------------------ MAIN CONTROLS ------------------
-col1, col2 = st.columns([2, 1])
+# ---------------- ETL EXECUTION ----------------
+col1, col2 = st.columns([3, 1])
 
 with col1:
-    if st.button("🚀 **Run Full ETL Pipeline**", type="primary", use_container_width=True):
-        with st.spinner("🧹 Cleaning outliers + filling missing values..."):
-            resp = requests.post(f"{API}/datasets/{dataset_id}/clean")
-            if resp.status_code == 200:
-                st.success("✅ **ETL COMPLETE!** Clean file ready.")
-                st.balloons()
+    if st.button("🚀 Execute Enterprise ETL", type="primary", use_container_width=True):
+        with st.spinner("Running ETL (dedup • imputation • outliers • quality scoring)…"):
+            r = requests.post(f"{API}/datasets/{dataset_id}/clean")
+
+            if r.status_code == 200:
+                st.session_state.etl_done = True
+                st.success("ETL completed successfully")
                 st.rerun()
             else:
-                st.error(f"ETL failed: {resp.json().get('detail', 'Unknown error')}")
+                if r.headers.get("content-type", "").startswith("application/json"):
+                    st.error(r.json().get("detail", "ETL failed"))
+                else:
+                    st.error("ETL failed — non-JSON backend response")
+                    st.code(r.text)
 
 with col2:
-    if st.button("📊 **Show Comparison**", use_container_width=True):
+    if st.button("📊 Load Comparison", use_container_width=True):
+        st.session_state.show_comp = True
         st.rerun()
 
-# ------------------ DOWNLOAD BUTTONS ------------------
+# ---------------- DOWNLOAD ZONE ----------------
 st.markdown("---")
-st.markdown("## ⬇️ **Download Files**")
+st.markdown("## ⬇️ Dataset Artifacts")
 
-col1, col2 = st.columns(2)
+d1, d2 = st.columns(2)
 
-with col1:
-    try:
-        resp = requests.get(f"{API}/datasets/{dataset_id}/download/clean")
-        if resp.status_code == 200:
-            st.download_button(
-                label="📥 **Download Clean CSV**",
-                data=resp.content,
-                file_name=f"{dataset_id}_clean.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-        else:
-            st.info("🧹 **Run ETL first** to download clean.csv")
-    except:
-        st.info("🧹 **Run ETL first**")
-
-with col2:
-    try:
-        resp = requests.get(f"{API}/datasets/{dataset_id}/download/raw")
-        if resp.status_code == 200:
-            st.download_button(
-                label="📥 **Download Raw CSV**",
-                data=resp.content,
-                file_name=f"{dataset_id}_raw.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
-    except:
-        st.info("📁 Raw file not found")
-
-# ------------------ COMPARISON METRICS ------------------
-st.markdown("---")
-st.markdown("## 📊 **Raw vs Clean Comparison**")
-
-try:
-    resp = requests.get(f"{API}/datasets/{dataset_id}/comparison")
-    if resp.status_code == 200:
-        comp = resp.json()
-        
-        # BIG METRICS
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("📈 Rows", f"{comp['raw_stats']['rows']:,}", f"{comp['clean_stats']['rows']:,}")
-        with col2:
-            st.metric("🔍 Missing %", f"{comp['raw_stats']['missing_percent']:.1f}%", f"{comp['clean_stats']['missing_percent']:.1f}%")
-        with col3:
-            st.metric("⚠️ Outliers Fixed", comp['improvements']['outliers_fixed'])
-        with col4:
-            st.metric("🎯 Expected Lift", f"+{comp['accuracy_lift_expected']:.1f}%")
-        
-        # SUMMARY TABLE
-        st.markdown("### **Detailed Improvements**")
-        st.json(comp)
-        
-        # DEMO MAGIC
-        st.success(f"""
-        ✅ **{comp['improvements']['outliers_fixed']:,} outliers clipped!**
-        ✅ **{comp['improvements']['missing_values_filled']:,} missing values filled!** 
-        ✅ **{comp['improvements']['numeric_columns_cleaned']} columns cleaned!**
-        """)
+# CLEAN
+with d1:
+    r = requests.get(f"{API}/datasets/{dataset_id}/download/clean")
+    if r.status_code == 200:
+        st.download_button(
+            "Download Clean Dataset",
+            data=r.content,
+            file_name=f"{dataset_id}_clean.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
     else:
-        st.info("👈 **Run ETL first** to see comparison")
-except:
-    st.info("👈 **Run ETL first** to see comparison")
+        st.info("Clean dataset not available (ETL not run yet)")
 
-## ------------------ NEXT STEPS WITH CLEAN DATA ------------------
+# RAW
+with d2:
+    r = requests.get(f"{API}/datasets/{dataset_id}/download/raw")
+    if r.status_code == 200:
+        st.download_button(
+            "Download Raw Dataset",
+            data=r.content,
+            file_name=f"{dataset_id}_raw.csv",
+            mime="text/csv",
+            use_container_width=True
+        )
+
+# ---------------- COMPARISON ----------------
 st.markdown("---")
-st.markdown("## 🚀 **Next: Use Clean Data Everywhere**")
+st.markdown("## 📊 ETL Impact Report")
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    if st.button("📈 **EDA (Clean Data)**", use_container_width=True):
-        st.session_state.next_page = "EDA"
-        st.rerun()
-with col2:
-    if st.button("🤖 **Train Model (Clean Data)**", use_container_width=True):
-        st.session_state.next_page = "Train"
-        st.rerun()
-with col3:
-    if st.button("🔮 **Predict**", use_container_width=True):
-        st.session_state.next_page = "Predict"
-        st.rerun()
+if st.session_state.get("show_comp") or st.session_state.get("etl_done"):
+    r = requests.get(f"{API}/datasets/{dataset_id}/comparison")
 
-# Auto-navigate
-if st.session_state.get("next_page"):
-    st.switch_page(f"pages/{st.session_state.next_page}.py")
+    if r.status_code != 200:
+        st.warning("Run ETL to generate comparison report")
+        st.stop()
+
+    comp = r.json()
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric("Rows", comp["raw_stats"]["rows"], comp["clean_stats"]["rows"])
+    c2.metric("Missing Filled", comp["improvements"]["missing_values_filled"])
+    c3.metric("Outliers Fixed", comp["improvements"]["outliers_fixed"])
+    c4.metric("Expected Lift", f"+{comp['accuracy_lift_expected']}%")
+
+    st.markdown("### Detailed ETL Intelligence")
+    st.json(comp)
+
+# ---------------- NEXT STEPS ----------------
+st.markdown("---")
+st.markdown("## 🚀 Production Flow")
+
+n1, n2, n3 = st.columns(3)
+
+with n1:
+    if st.button("📈 EDA (Clean)", use_container_width=True):
+        st.switch_page("pages/EDA.py")
+
+
+with n2:
+    if st.button("Train Model", use_container_width=True):
+        st.switch_page("pages/Train.py")
+with n3:
+    if st.button("Predict", use_container_width=True):
+        st.switch_page("pages/Predict.py")

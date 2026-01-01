@@ -13,6 +13,8 @@ from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
                            confusion_matrix, mean_squared_error, mean_absolute_error, r2_score)
 from backend.services.utils import load_df, clean_dataframe, dataset_dir, validate_target, safe_json
+from backend.services.utils import load_df, clean_dataframe, dataset_dir, safe_json
+
 
 def train_model_logic(dataset_id: str, target: str = "auto"):
     try:

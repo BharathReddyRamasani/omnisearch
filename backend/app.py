@@ -1,14 +1,337 @@
 
-# # # backend/app.py - YOUR CODE IS PERFECT, JUST FIX IMPORTS
+# # # # # backend/app.py - YOUR CODE IS PERFECT, JUST FIX IMPORTS
+# # # # from fastapi import FastAPI, UploadFile, File, HTTPException
+# # # # from fastapi.middleware.cors import CORSMiddleware
+# # # # from fastapi.responses import JSONResponse, FileResponse
+# # # # from fastapi.encoders import jsonable_encoder
+
+# # # # import os
+# # # # import json
+# # # # import uuid
+# # # # import math
+# # # # import pandas as pd
+# # # # import numpy as np
+# # # # import joblib
+
+# # # # from sklearn.compose import ColumnTransformer
+# # # # from sklearn.pipeline import Pipeline
+# # # # from sklearn.preprocessing import OneHotEncoder, StandardScaler
+# # # # from sklearn.impute import SimpleImputer
+# # # # from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+# # # # from sklearn.model_selection import train_test_split
+# # # # from sklearn.metrics import (
+# # # #     accuracy_score, precision_score, recall_score,
+# # # #     confusion_matrix, mean_squared_error, mean_absolute_error, r2_score
+# # # # )
+
+# # # # # ✅ FIXED IMPORTS (matches your project structure)[file:1]
+# # # # from backend.services.cleaning import full_etl
+# # # # from backend.services.utils import datasetdir, loaddf
+
+# # # # # =====================================================
+# # # # # APP SETUP
+# # # # # =====================================================
+# # # # app = FastAPI(title="OmniSearch AI 🚀")
+
+# # # # app.add_middleware(
+# # # #     CORSMiddleware,
+# # # #     allow_origins=["http://localhost:8501", "*"],  # Adjust as needed
+# # # #     allow_credentials=True,
+# # # #     allow_methods=["*"],
+# # # #     allow_headers=["*"],
+# # # # )
+
+# # # # # Ensure base directories exist
+# # # # os.makedirs("data", exist_ok=True)
+# # # # os.makedirs("models", exist_ok=True)
+
+# # # # # =====================================================
+# # # # # SAFE JSON ENCODING (handles NaN/inf)
+# # # # # =====================================================
+# # # # def safe_float(val):
+# # # #     if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
+# # # #         return None
+# # # #     return val
+
+# # # # def safe_encoder(obj):
+# # # #     return jsonable_encoder(obj, custom_encoder={float: safe_float})
+
+# # # # # =====================================================
+# # # # # UPLOAD
+# # # # # =====================================================
+# # # # @app.post("/upload")
+# # # # async def upload_csv(file: UploadFile = File(...)):
+# # # #     dataset_id = str(uuid.uuid4())[:8]
+# # # #     raw_path = f"data/{dataset_id}.csv"
+    
+# # # #     # Save raw file
+# # # #     with open(raw_path, "wb") as f:
+# # # #         content = await file.read()
+# # # #         f.write(content)
+    
+# # # #     try:
+# # # #         # Safe preview (replace NaN with None for JSON)
+# # # #         df_preview = pd.read_csv(raw_path, nrows=5).replace({np.nan: None})
+# # # #         total_rows = len(pd.read_csv(raw_path))
+        
+# # # #         return safe_encoder({
+# # # #             "status": "ok",
+# # # #             "dataset_id": dataset_id,
+# # # #             "columns": list(df_preview.columns),
+# # # #             "preview": df_preview.head(2).to_dict("records"),
+# # # #             "rows": total_rows
+# # # #         })
+# # # #     except Exception as e:
+# # # #         return safe_encoder({
+# # # #             "status": "ok",
+# # # #             "dataset_id": dataset_id,
+# # # #             "columns": [],
+# # # #             "preview": [],
+# # # #             "rows": 0,
+# # # #             "warning": f"Preview failed: {str(e)}"
+# # # #         })
+
+# # # # # =====================================================
+# # # # # EDA - Industrial Quality Score
+# # # # # =====================================================
+# # # # @app.get("/eda/{dataset_id}")
+# # # # def run_eda(dataset_id: str):
+# # # #     filepath = f"data/{dataset_id}.csv"
+# # # #     if not os.path.exists(filepath):
+# # # #         raise HTTPException(status_code=404, detail="File not found")
+    
+# # # #     try:
+# # # #         df = pd.read_csv(filepath)
+        
+# # # #         total_rows = len(df)
+# # # #         total_missing = df.isnull().sum().sum()
+# # # #         missing_pct = total_missing / (total_rows * len(df.columns)) * 100 if total_rows > 0 else 0
+        
+# # # #         numeric_cols = df.select_dtypes(include=['number']).columns
+# # # #         outlier_score = 0
+# # # #         if len(numeric_cols) > 0:
+# # # #             for col in numeric_cols:
+# # # #                 Q1 = df[col].quantile(0.25)
+# # # #                 Q3 = df[col].quantile(0.75)
+# # # #                 IQR = Q3 - Q1
+# # # #                 outliers = ((df[col] < (Q1 - 1.5 * IQR)) | (df[col] > (Q3 + 1.5 * IQR))).sum()
+# # # #                 outlier_score += outliers / total_rows * 100
+        
+# # # #         outlier_pct = outlier_score / len(numeric_cols) if len(numeric_cols) > 0 else 0
+        
+# # # #         # Professional quality score (0-100)
+# # # #         quality_score = max(0, min(100, 100 - (missing_pct * 0.6 + outlier_pct * 0.4)))
+        
+# # # #         grade = "A" if quality_score >= 90 else "B" if quality_score >= 80 else "C" if quality_score >= 70 else "D"
+# # # #         recommendation = (
+# # # #             "Production ready" if quality_score >= 90 else
+# # # #             "Minor cleaning needed" if quality_score >= 70 else
+# # # #             "Heavy preprocessing required"
+# # # #         )
+        
+# # # #         return safe_encoder({
+# # # #             "status": "ok",
+# # # #             "eda": {
+# # # #                 "rows": total_rows,
+# # # #                 "columns": len(df.columns),
+# # # #                 "missing": df.isnull().sum().replace({np.nan: None}).to_dict(),
+# # # #                 "missing_total": int(total_missing),
+# # # #                 "missing_pct": round(missing_pct, 2),
+# # # #                 "outlier_pct": round(outlier_pct, 2),
+# # # #                 "quality_score": round(quality_score, 1),
+# # # #                 "quality_grade": grade,
+# # # #                 "recommendations": [recommendation],
+# # # #                 "summary": df.describe().round(2).replace({np.nan: None}).to_dict()
+# # # #             }
+# # # #         })
+# # # #     except Exception as e:
+# # # #         raise HTTPException(status_code=500, detail=str(e))
+
+# # # # # =====================================================
+# # # # # ETL: Cleaning + Comparison + Downloads
+# # # # # =====================================================
+# # # # @app.post("/datasets/{dataset_id}/clean")
+# # # # def run_etl(dataset_id: str):
+# # # #     result = full_etl(dataset_id)
+# # # #     if result.get("status") != "success":
+# # # #         raise HTTPException(status_code=400, detail=result.get("error", "ETL failed"))
+# # # #     return safe_encoder(result)
+
+# # # # @app.get("/datasets/{dataset_id}/comparison")
+# # # # def get_comparison(dataset_id: str):
+# # # #     comp_path = os.path.join(datasetdir(dataset_id), "comparison.json")
+# # # #     if not os.path.exists(comp_path):
+# # # #         raise HTTPException(status_code=404, detail="Run ETL first")
+# # # #     with open(comp_path, "r", encoding="utf-8") as f:
+# # # #         data = json.load(f)
+# # # #     return safe_encoder(data)
+
+# # # # @app.get("/datasets/{dataset_id}/download/clean")
+# # # # def download_clean(dataset_id: str):
+# # # #     clean_path = os.path.join(datasetdir(dataset_id), "clean.csv")
+# # # #     if not os.path.exists(clean_path):
+# # # #         raise HTTPException(status_code=404, detail="clean.csv not found. Run ETL first.")
+# # # #     return FileResponse(
+# # # #         path=clean_path,
+# # # #         media_type="text/csv",
+# # # #         filename=f"{dataset_id}_clean.csv"
+# # # #     )
+
+# # # # @app.get("/datasets/{dataset_id}/download/raw")
+# # # # def download_raw(dataset_id: str):
+# # # #     raw_path = f"data/{dataset_id}.csv"
+# # # #     if not os.path.exists(raw_path):
+# # # #         raise HTTPException(status_code=404, detail="raw.csv not found")
+# # # #     return FileResponse(
+# # # #         path=raw_path,
+# # # #         media_type="text/csv",
+# # # #         filename=f"{dataset_id}_raw.csv"
+# # # #     )
+
+# # # # # =====================================================
+# # # # # TRAIN
+# # # # # =====================================================
+# # # # @app.post("/train/{dataset_id}")
+# # # # def train_model(dataset_id: str, data: dict = None):
+# # # #     try:
+# # # #         user_target = data.get("target") if data else None
+# # # #         filepath = f"data/{dataset_id}.csv"
+# # # #         df = pd.read_csv(filepath)
+        
+# # # #         # Target selection logic
+# # # #         if user_target and user_target in df.columns:
+# # # #             target_col = user_target
+# # # #         else:
+# # # #             numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+# # # #             exclude = ['Id', 'id', 'ID', 'index']
+# # # #             candidates = [c for c in numeric_cols if c.lower() not in [e.lower() for e in exclude]]
+# # # #             target_col = max(candidates, key=lambda c: df[c].std()) if candidates else None
+        
+# # # #         if not target_col:
+# # # #             return safe_encoder({"status": "error", "message": "No suitable target column found"})
+        
+# # # #         feature_cols = [c for c in df.columns if c != target_col]
+# # # #         X = df[feature_cols].copy()
+# # # #         y = df[target_col]
+        
+# # # #         # Safe preprocessing
+# # # #         safe_numeric = X.select_dtypes(include=['number']).columns.tolist()
+# # # #         safe_categorical = [c for c in X.select_dtypes(include=['object']).columns if X[c].nunique() < 20]
+        
+# # # #         transformers = []
+# # # #         if safe_numeric:
+# # # #             transformers.append(('num', Pipeline([
+# # # #                 ('imputer', SimpleImputer(strategy='median')),
+# # # #                 ('scaler', StandardScaler())
+# # # #             ]), safe_numeric))
+# # # #         if safe_categorical:
+# # # #             transformers.append(('cat', Pipeline([
+# # # #                 ('imputer', SimpleImputer(strategy='most_frequent')),
+# # # #                 ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
+# # # #             ]), safe_categorical))
+        
+# # # #         preprocessor = ColumnTransformer(transformers, remainder='drop')
+        
+# # # #         # Model selection
+# # # #         if y.nunique() <= 10:
+# # # #             model = RandomForestClassifier(n_estimators=100, random_state=42)
+# # # #             task = "classification"
+# # # #         else:
+# # # #             model = RandomForestRegressor(n_estimators=100, random_state=42)
+# # # #             task = "regression"
+        
+# # # #         pipeline = Pipeline([('preprocessor', preprocessor), ('model', model)])
+        
+# # # #         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# # # #         pipeline.fit(X_train, y_train)
+# # # #         y_pred = pipeline.predict(X_test)
+        
+# # # #         score = accuracy_score(y_test, y_pred) if task == "classification" else r2_score(y_test, y_pred)
+        
+# # # #         model_path = f"models/{dataset_id}.pkl"
+# # # #         joblib.dump({
+# # # #             'pipeline': pipeline,
+# # # #             'target': target_col,
+# # # #             'task': task,
+# # # #             'score': float(score),
+# # # #             'features': feature_cols
+# # # #         }, model_path)
+        
+# # # #         return safe_encoder({
+# # # #             "status": "ok",
+# # # #             "target": target_col,
+# # # #             "task": task,
+# # # #             "score": round(float(score), 3),
+# # # #             "features_used": len(safe_numeric) + len(safe_categorical),
+# # # #             "message": f"{task.title()} model trained on '{target_col}'! Score: {score:.3f}"
+# # # #         })
+# # # #     except Exception as e:
+# # # #         return safe_encoder({"status": "error", "message": str(e)[:200]})
+
+# # # # # =====================================================
+# # # # # MODEL META
+# # # # # =====================================================
+# # # # @app.get("/meta/{dataset_id}")
+# # # # def get_model_meta(dataset_id: str):
+# # # #     model_path = f"models/{dataset_id}.pkl"
+# # # #     if not os.path.exists(model_path):
+# # # #         raise HTTPException(status_code=404, detail="No trained model")
+    
+# # # #     try:
+# # # #         info = joblib.load(model_path)
+# # # #         return safe_encoder({
+# # # #             "status": "ok",
+# # # #             "target": info.get('target'),
+# # # #             "task": info.get('task'),
+# # # #             "score": info.get('score'),
+# # # #             "features": info.get('features', [])
+# # # #         })
+# # # #     except:
+# # # #         raise HTTPException(status_code=500, detail="Failed to load model metadata")
+
+# # # # # =====================================================
+# # # # # PREDICT
+# # # # # =====================================================
+# # # # @app.post("/predict/{dataset_id}")
+# # # # def predict(dataset_id: str, data: dict):
+# # # #     model_path = f"models/{dataset_id}.pkl"
+# # # #     if not os.path.exists(model_path):
+# # # #         raise HTTPException(status_code=404, detail="Model not trained")
+    
+# # # #     try:
+# # # #         model_info = joblib.load(model_path)
+# # # #         pipeline = model_info['pipeline']
+        
+# # # #         input_data = data.get("input_data", {})
+# # # #         input_df = pd.DataFrame([input_data])
+        
+# # # #         prediction = pipeline.predict(input_df)[0]
+        
+# # # #         return safe_encoder({
+# # # #             "status": "ok",
+# # # #             "prediction": float(prediction),
+# # # #             "target": model_info.get('target'),
+# # # #             "task": model_info.get('task')
+# # # #         })
+# # # #     except Exception as e:
+# # # #         return safe_encoder({"status": "error", "message": f"Prediction failed: {str(e)[:100]}"})
+
+# # # # # =====================================================
+# # # # # RUN SERVER
+# # # # # =====================================================
+# # # # if __name__ == "__main__":
+# # # #     import uvicorn
+# # # #     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+# # # # backend/app.py - FINAL PRODUCTION VERSION (Multi-Model + ETL Intelligence)
+# # # # backend/app.py  – EDA + ETL PART
+# # # # backend/app.py  – relevant parts
+
 # # from fastapi import FastAPI, UploadFile, File, HTTPException
 # # from fastapi.middleware.cors import CORSMiddleware
-# # from fastapi.responses import JSONResponse, FileResponse
+# # from fastapi.responses import FileResponse
 # # from fastapi.encoders import jsonable_encoder
 
-# # import os
-# # import json
-# # import uuid
-# # import math
+# # import os, json, uuid, math
 # # import pandas as pd
 # # import numpy as np
 # # import joblib
@@ -19,64 +342,56 @@
 # # from sklearn.impute import SimpleImputer
 # # from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 # # from sklearn.model_selection import train_test_split
-# # from sklearn.metrics import (
-# #     accuracy_score, precision_score, recall_score,
-# #     confusion_matrix, mean_squared_error, mean_absolute_error, r2_score
-# # )
+# # from sklearn.metrics import accuracy_score, r2_score
 
-# # # ✅ FIXED IMPORTS (matches your project structure)[file:1]
+# # import xgboost as xgb
+# # from lightgbm import LGBMClassifier, LGBMRegressor
+
 # # from backend.services.cleaning import full_etl
-# # from backend.services.utils import datasetdir, loaddf
+# # from backend.services.utils import datasetdir
 
-# # # =====================================================
-# # # APP SETUP
-# # # =====================================================
 # # app = FastAPI(title="OmniSearch AI 🚀")
 
 # # app.add_middleware(
 # #     CORSMiddleware,
-# #     allow_origins=["http://localhost:8501", "*"],  # Adjust as needed
+# #     allow_origins=["http://localhost:8501", "*"],
 # #     allow_credentials=True,
 # #     allow_methods=["*"],
 # #     allow_headers=["*"],
 # # )
 
-# # # Ensure base directories exist
 # # os.makedirs("data", exist_ok=True)
 # # os.makedirs("models", exist_ok=True)
 
-# # # =====================================================
-# # # SAFE JSON ENCODING (handles NaN/inf)
-# # # =====================================================
+
 # # def safe_float(val):
 # #     if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
 # #         return None
 # #     return val
 
+
 # # def safe_encoder(obj):
 # #     return jsonable_encoder(obj, custom_encoder={float: safe_float})
 
-# # # =====================================================
-# # # UPLOAD
-# # # =====================================================
+
+# # # ---------- UPLOAD (unchanged) ----------
 # # @app.post("/upload")
 # # async def upload_csv(file: UploadFile = File(...)):
 # #     dataset_id = str(uuid.uuid4())[:8]
 # #     raw_path = f"data/{dataset_id}.csv"
-    
-# #     # Save raw file
+
 # #     with open(raw_path, "wb") as f:
 # #         content = await file.read()
 # #         f.write(content)
-    
+
 # #     try:
-# #         # Safe preview (replace NaN with None for JSON)
 # #         df_preview = pd.read_csv(raw_path, nrows=5).replace({np.nan: None})
 # #         total_rows = len(pd.read_csv(raw_path))
-        
+
 # #         return safe_encoder({
 # #             "status": "ok",
 # #             "dataset_id": dataset_id,
+# #             "original_filename": file.filename,
 # #             "columns": list(df_preview.columns),
 # #             "preview": df_preview.head(2).to_dict("records"),
 # #             "rows": total_rows
@@ -91,71 +406,71 @@
 # #             "warning": f"Preview failed: {str(e)}"
 # #         })
 
-# # # =====================================================
-# # # EDA - Industrial Quality Score
-# # # =====================================================
+
+# # # ---------- EDA: RAW vs CLEAN ----------
 # # @app.get("/eda/{dataset_id}")
 # # def run_eda(dataset_id: str):
-# #     filepath = f"data/{dataset_id}.csv"
-# #     if not os.path.exists(filepath):
-# #         raise HTTPException(status_code=404, detail="File not found")
-    
 # #     try:
-# #         df = pd.read_csv(filepath)
-        
-# #         total_rows = len(df)
+# #         # where ETL writes cleaned files
+# #         ds_dir = datasetdir(dataset_id)
+# #         clean_path = os.path.join(ds_dir, "clean.csv")
+# #         comp_path = os.path.join(ds_dir, "comparison.json")
+# #         raw_path = f"data/{dataset_id}.csv"
+
+# #         etl_done = os.path.exists(clean_path)
+
+# #         if etl_done:
+# #             # user has pressed ETL clean → use cleaned data
+# #             df = pd.read_csv(clean_path)
+# #             source = "CLEAN"
+# #         elif os.path.exists(raw_path):
+# #             # ETL not run → use raw
+# #             df = pd.read_csv(raw_path)
+# #             source = "RAW"
+# #         else:
+# #             raise HTTPException(status_code=404, detail="Dataset not found")
+
+# #         comparison = None
+# #         if os.path.exists(comp_path):
+# #             with open(comp_path, "r", encoding="utf-8") as f:
+# #                 comparison = json.load(f)
+
 # #         total_missing = df.isnull().sum().sum()
-# #         missing_pct = total_missing / (total_rows * len(df.columns)) * 100 if total_rows > 0 else 0
-        
-# #         numeric_cols = df.select_dtypes(include=['number']).columns
-# #         outlier_score = 0
-# #         if len(numeric_cols) > 0:
-# #             for col in numeric_cols:
-# #                 Q1 = df[col].quantile(0.25)
-# #                 Q3 = df[col].quantile(0.75)
-# #                 IQR = Q3 - Q1
-# #                 outliers = ((df[col] < (Q1 - 1.5 * IQR)) | (df[col] > (Q3 + 1.5 * IQR))).sum()
-# #                 outlier_score += outliers / total_rows * 100
-        
-# #         outlier_pct = outlier_score / len(numeric_cols) if len(numeric_cols) > 0 else 0
-        
-# #         # Professional quality score (0-100)
-# #         quality_score = max(0, min(100, 100 - (missing_pct * 0.6 + outlier_pct * 0.4)))
-        
-# #         grade = "A" if quality_score >= 90 else "B" if quality_score >= 80 else "C" if quality_score >= 70 else "D"
-# #         recommendation = (
-# #             "Production ready" if quality_score >= 90 else
-# #             "Minor cleaning needed" if quality_score >= 70 else
-# #             "Heavy preprocessing required"
-# #         )
-        
+# #         missing_pct = total_missing / (len(df) * len(df.columns)) * 100 if len(df) > 0 else 0
+# #         quality_score = max(0, min(100, 100 - missing_pct))
+
 # #         return safe_encoder({
 # #             "status": "ok",
 # #             "eda": {
-# #                 "rows": total_rows,
-# #                 "columns": len(df.columns),
+# #                 "rows": int(len(df)),
+# #                 "columns": int(len(df.columns)),
 # #                 "missing": df.isnull().sum().replace({np.nan: None}).to_dict(),
-# #                 "missing_total": int(total_missing),
 # #                 "missing_pct": round(missing_pct, 2),
-# #                 "outlier_pct": round(outlier_pct, 2),
 # #                 "quality_score": round(quality_score, 1),
-# #                 "quality_grade": grade,
-# #                 "recommendations": [recommendation],
+# #                 "data_source": source,
+# #                 "etl_complete": etl_done,
+# #                 "etl_improvements": comparison,
 # #                 "summary": df.describe().round(2).replace({np.nan: None}).to_dict()
 # #             }
 # #         })
 # #     except Exception as e:
 # #         raise HTTPException(status_code=500, detail=str(e))
 
-# # # =====================================================
-# # # ETL: Cleaning + Comparison + Downloads
-# # # =====================================================
+
+# # # ---------- ETL ROUTES ----------
 # # @app.post("/datasets/{dataset_id}/clean")
 # # def run_etl(dataset_id: str):
+# #     """
+# #     full_etl(dataset_id) is expected to:
+# #       - read data/{dataset_id}.csv
+# #       - write clean.csv into datasetdir(dataset_id)
+# #       - write comparison.json into datasetdir(dataset_id)
+# #     """
 # #     result = full_etl(dataset_id)
 # #     if result.get("status") != "success":
 # #         raise HTTPException(status_code=400, detail=result.get("error", "ETL failed"))
 # #     return safe_encoder(result)
+
 
 # # @app.get("/datasets/{dataset_id}/comparison")
 # # def get_comparison(dataset_id: str):
@@ -166,39 +481,44 @@
 # #         data = json.load(f)
 # #     return safe_encoder(data)
 
+
 # # @app.get("/datasets/{dataset_id}/download/clean")
 # # def download_clean(dataset_id: str):
 # #     clean_path = os.path.join(datasetdir(dataset_id), "clean.csv")
 # #     if not os.path.exists(clean_path):
-# #         raise HTTPException(status_code=404, detail="clean.csv not found. Run ETL first.")
-# #     return FileResponse(
-# #         path=clean_path,
-# #         media_type="text/csv",
-# #         filename=f"{dataset_id}_clean.csv"
-# #     )
+# #         raise HTTPException(status_code=404, detail="Run ETL first")
+# #     return FileResponse(path=clean_path, media_type="text/csv", filename=f"{dataset_id}_clean.csv")
+
 
 # # @app.get("/datasets/{dataset_id}/download/raw")
 # # def download_raw(dataset_id: str):
 # #     raw_path = f"data/{dataset_id}.csv"
 # #     if not os.path.exists(raw_path):
-# #         raise HTTPException(status_code=404, detail="raw.csv not found")
-# #     return FileResponse(
-# #         path=raw_path,
-# #         media_type="text/csv",
-# #         filename=f"{dataset_id}_raw.csv"
-# #     )
+# #         raise HTTPException(status_code=404, detail="Raw file not found")
+# #     return FileResponse(path=raw_path, media_type="text/csv", filename=f"{dataset_id}_raw.csv")
+
+# # # (… keep your train/meta/predict as already working …)
 
 # # # =====================================================
-# # # TRAIN
+# # # MULTI-MODEL TRAINING (Clean data priority!)
 # # # =====================================================
 # # @app.post("/train/{dataset_id}")
 # # def train_model(dataset_id: str, data: dict = None):
 # #     try:
-# #         user_target = data.get("target") if data else None
-# #         filepath = f"data/{dataset_id}.csv"
-# #         df = pd.read_csv(filepath)
+# #         # ✅ Priority: clean.csv → raw.csv
+# #         clean_path = os.path.join(datasetdir(dataset_id), "clean.csv")
+# #         raw_path = f"data/{dataset_id}.csv"
         
-# #         # Target selection logic
+# #         if os.path.exists(clean_path):
+# #             df = pd.read_csv(clean_path)
+# #             data_source = "clean.csv"
+# #         elif os.path.exists(raw_path):
+# #             df = pd.read_csv(raw_path)
+# #             data_source = "raw.csv"
+# #         else:
+# #             return safe_encoder({"status": "error", "message": "Dataset not found"})
+        
+# #         user_target = data.get("target") if data else None
 # #         if user_target and user_target in df.columns:
 # #             target_col = user_target
 # #         else:
@@ -210,11 +530,10 @@
 # #         if not target_col:
 # #             return safe_encoder({"status": "error", "message": "No suitable target column found"})
         
-# #         feature_cols = [c for c in df.columns if c != target_col]
+# #         feature_cols = [col for col in df.columns if col != target_col]
 # #         X = df[feature_cols].copy()
 # #         y = df[target_col]
         
-# #         # Safe preprocessing
 # #         safe_numeric = X.select_dtypes(include=['number']).columns.tolist()
 # #         safe_categorical = [c for c in X.select_dtypes(include=['object']).columns if X[c].nunique() < 20]
         
@@ -231,40 +550,57 @@
 # #             ]), safe_categorical))
         
 # #         preprocessor = ColumnTransformer(transformers, remainder='drop')
+# #         task = "classification" if y.nunique() <= 10 else "regression"
         
-# #         # Model selection
-# #         if y.nunique() <= 10:
-# #             model = RandomForestClassifier(n_estimators=100, random_state=42)
-# #             task = "classification"
-# #         else:
-# #             model = RandomForestRegressor(n_estimators=100, random_state=42)
-# #             task = "regression"
+# #         # ✅ MULTI-MODEL COMPETITION
+# #         models = {
+# #             "rf": RandomForestClassifier(n_estimators=100, random_state=42) if task == "classification" else RandomForestRegressor(n_estimators=100, random_state=42),
+# #             "xgb": xgb.XGBClassifier(n_estimators=100, random_state=42, eval_metric="logloss") if task == "classification" else xgb.XGBRegressor(n_estimators=100, random_state=42),
+# #             "lgb": LGBMClassifier(n_estimators=100, random_state=42, verbose=-1) if task == "classification" else LGBMRegressor(n_estimators=100, random_state=42, verbose=-1)
+# #         }
         
-# #         pipeline = Pipeline([('preprocessor', preprocessor), ('model', model)])
+# #         results = {}
+# #         best_score = -np.inf
+# #         best_pipeline = None
+# #         best_model_name = None
         
 # #         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-# #         pipeline.fit(X_train, y_train)
-# #         y_pred = pipeline.predict(X_test)
         
-# #         score = accuracy_score(y_test, y_pred) if task == "classification" else r2_score(y_test, y_pred)
+# #         for name, model in models.items():
+# #             pipe = Pipeline([('preprocessor', preprocessor), ('model', model)])
+# #             pipe.fit(X_train, y_train)
+# #             y_pred = pipe.predict(X_test)
+# #             score = accuracy_score(y_test, y_pred) if task == "classification" else r2_score(y_test, y_pred)
+# #             results[name] = {"score": float(score)}
+            
+# #             if score > best_score:
+# #                 best_score = score
+# #                 best_pipeline = pipe
+# #                 best_model_name = name
         
 # #         model_path = f"models/{dataset_id}.pkl"
 # #         joblib.dump({
-# #             'pipeline': pipeline,
+# #             'pipeline': best_pipeline,
 # #             'target': target_col,
 # #             'task': task,
-# #             'score': float(score),
-# #             'features': feature_cols
+# #             'best_model': best_model_name,
+# #             'scores': results,
+# #             'features': feature_cols,
+# #             'trained_on': data_source
 # #         }, model_path)
         
 # #         return safe_encoder({
 # #             "status": "ok",
 # #             "target": target_col,
 # #             "task": task,
-# #             "score": round(float(score), 3),
+# #             "best_score": round(float(best_score), 4),
+# #             "best_model": best_model_name.upper(),
+# #             "model_leaderboard": results,
+# #             "trained_on": data_source,
 # #             "features_used": len(safe_numeric) + len(safe_categorical),
-# #             "message": f"{task.title()} model trained on '{target_col}'! Score: {score:.3f}"
+# #             "message": f"🏆 {best_model_name.upper()} WINS with {best_score:.4f}!"
 # #         })
+        
 # #     except Exception as e:
 # #         return safe_encoder({"status": "error", "message": str(e)[:200]})
 
@@ -283,11 +619,12 @@
 # #             "status": "ok",
 # #             "target": info.get('target'),
 # #             "task": info.get('task'),
-# #             "score": info.get('score'),
+# #             "best_model": info.get('best_model'),
+# #             "model_leaderboard": info.get('scores', {}),
 # #             "features": info.get('features', [])
 # #         })
-# #     except:
-# #         raise HTTPException(status_code=500, detail="Failed to load model metadata")
+# #     except Exception as e:
+# #         raise HTTPException(status_code=500, detail="Failed to load metadata")
 
 # # # =====================================================
 # # # PREDICT
@@ -311,7 +648,8 @@
 # #             "status": "ok",
 # #             "prediction": float(prediction),
 # #             "target": model_info.get('target'),
-# #             "task": model_info.get('task')
+# #             "task": model_info.get('task'),
+# #             "model_used": model_info.get('best_model')
 # #         })
 # #     except Exception as e:
 # #         return safe_encoder({"status": "error", "message": f"Prediction failed: {str(e)[:100]}"})
@@ -322,36 +660,39 @@
 # # if __name__ == "__main__":
 # #     import uvicorn
 # #     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
-# # backend/app.py - FINAL PRODUCTION VERSION (Multi-Model + ETL Intelligence)
-# # backend/app.py  – EDA + ETL PART
-# # backend/app.py  – relevant parts
-
+# # # # backend/app.py - COMPLETE NaN-PROOF VERSION
 # from fastapi import FastAPI, UploadFile, File, HTTPException
 # from fastapi.middleware.cors import CORSMiddleware
 # from fastapi.responses import FileResponse
 # from fastapi.encoders import jsonable_encoder
-
-# import os, json, uuid, math
+# import os
+# import json
+# import uuid
+# import math
 # import pandas as pd
 # import numpy as np
 # import joblib
-
+# import traceback
 # from sklearn.compose import ColumnTransformer
 # from sklearn.pipeline import Pipeline
 # from sklearn.preprocessing import OneHotEncoder, StandardScaler
 # from sklearn.impute import SimpleImputer
 # from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 # from sklearn.model_selection import train_test_split
-# from sklearn.metrics import accuracy_score, r2_score
-
+# from sklearn.metrics import (
+#     accuracy_score, r2_score, mean_squared_error, mean_absolute_error,
+#     confusion_matrix, precision_recall_fscore_support
+# )
 # import xgboost as xgb
 # from lightgbm import LGBMClassifier, LGBMRegressor
-
-# from backend.services.cleaning import full_etl
-# from backend.services.utils import datasetdir
-
+# try:
+#     from backend.services.cleaning import full_etl
+#     from backend.services.utils import datasetdir
+# except ImportError:
+#     # Fallback for missing services
+#     def full_etl(dataset_id): return {"status": "success"}
+#     def datasetdir(dataset_id): return f"data/{dataset_id}"
 # app = FastAPI(title="OmniSearch AI 🚀")
-
 # app.add_middleware(
 #     CORSMiddleware,
 #     allow_origins=["http://localhost:8501", "*"],
@@ -359,156 +700,111 @@
 #     allow_methods=["*"],
 #     allow_headers=["*"],
 # )
-
 # os.makedirs("data", exist_ok=True)
 # os.makedirs("models", exist_ok=True)
-
-
 # def safe_float(val):
 #     if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
 #         return None
 #     return val
-
-
 # def safe_encoder(obj):
 #     return jsonable_encoder(obj, custom_encoder={float: safe_float})
-
-
-# # ---------- UPLOAD (unchanged) ----------
 # @app.post("/upload")
 # async def upload_csv(file: UploadFile = File(...)):
 #     dataset_id = str(uuid.uuid4())[:8]
 #     raw_path = f"data/{dataset_id}.csv"
-
+  
 #     with open(raw_path, "wb") as f:
 #         content = await file.read()
 #         f.write(content)
-
+  
 #     try:
 #         df_preview = pd.read_csv(raw_path, nrows=5).replace({np.nan: None})
 #         total_rows = len(pd.read_csv(raw_path))
-
 #         return safe_encoder({
-#             "status": "ok",
-#             "dataset_id": dataset_id,
+#             "status": "ok", "dataset_id": dataset_id,
 #             "original_filename": file.filename,
 #             "columns": list(df_preview.columns),
 #             "preview": df_preview.head(2).to_dict("records"),
 #             "rows": total_rows
 #         })
 #     except Exception as e:
-#         return safe_encoder({
-#             "status": "ok",
-#             "dataset_id": dataset_id,
-#             "columns": [],
-#             "preview": [],
-#             "rows": 0,
-#             "warning": f"Preview failed: {str(e)}"
-#         })
-
-
-# # ---------- EDA: RAW vs CLEAN ----------
+#         return safe_encoder({"status": "ok", "dataset_id": dataset_id, "rows": 0, "warning": str(e)})
 # @app.get("/eda/{dataset_id}")
 # def run_eda(dataset_id: str):
 #     try:
-#         # where ETL writes cleaned files
 #         ds_dir = datasetdir(dataset_id)
 #         clean_path = os.path.join(ds_dir, "clean.csv")
-#         comp_path = os.path.join(ds_dir, "comparison.json")
 #         raw_path = f"data/{dataset_id}.csv"
-
-#         etl_done = os.path.exists(clean_path)
-
-#         if etl_done:
-#             # user has pressed ETL clean → use cleaned data
+#         if os.path.exists(clean_path):
 #             df = pd.read_csv(clean_path)
 #             source = "CLEAN"
 #         elif os.path.exists(raw_path):
-#             # ETL not run → use raw
 #             df = pd.read_csv(raw_path)
 #             source = "RAW"
 #         else:
 #             raise HTTPException(status_code=404, detail="Dataset not found")
-
-#         comparison = None
-#         if os.path.exists(comp_path):
-#             with open(comp_path, "r", encoding="utf-8") as f:
-#                 comparison = json.load(f)
-
 #         total_missing = df.isnull().sum().sum()
 #         missing_pct = total_missing / (len(df) * len(df.columns)) * 100 if len(df) > 0 else 0
 #         quality_score = max(0, min(100, 100 - missing_pct))
-
 #         return safe_encoder({
-#             "status": "ok",
-#             "eda": {
-#                 "rows": int(len(df)),
-#                 "columns": int(len(df.columns)),
+#             "status": "ok", "eda": {
+#                 "rows": int(len(df)), "columns": int(len(df.columns)),
 #                 "missing": df.isnull().sum().replace({np.nan: None}).to_dict(),
-#                 "missing_pct": round(missing_pct, 2),
-#                 "quality_score": round(quality_score, 1),
-#                 "data_source": source,
-#                 "etl_complete": etl_done,
-#                 "etl_improvements": comparison,
+#                 "missing_pct": round(missing_pct, 2), "quality_score": round(quality_score, 1),
+#                 "data_source": source, "etl_complete": os.path.exists(clean_path),
 #                 "summary": df.describe().round(2).replace({np.nan: None}).to_dict()
 #             }
 #         })
 #     except Exception as e:
 #         raise HTTPException(status_code=500, detail=str(e))
-
-
-# # ---------- ETL ROUTES ----------
 # @app.post("/datasets/{dataset_id}/clean")
 # def run_etl(dataset_id: str):
-#     """
-#     full_etl(dataset_id) is expected to:
-#       - read data/{dataset_id}.csv
-#       - write clean.csv into datasetdir(dataset_id)
-#       - write comparison.json into datasetdir(dataset_id)
-#     """
-#     result = full_etl(dataset_id)
-#     if result.get("status") != "success":
-#         raise HTTPException(status_code=400, detail=result.get("error", "ETL failed"))
-#     return safe_encoder(result)
-
-
+#     try:
+#         result = full_etl(dataset_id)
+#         return safe_encoder(result)
+#     except:
+#         return safe_encoder({"status": "success", "message": "ETL stub - working"})
 # @app.get("/datasets/{dataset_id}/comparison")
 # def get_comparison(dataset_id: str):
-#     comp_path = os.path.join(datasetdir(dataset_id), "comparison.json")
-#     if not os.path.exists(comp_path):
-#         raise HTTPException(status_code=404, detail="Run ETL first")
-#     with open(comp_path, "r", encoding="utf-8") as f:
-#         data = json.load(f)
-#     return safe_encoder(data)
-
-
+#     return safe_encoder({"status": "ok", "improvements": {"outliers_fixed": 1702, "missing_filled": 456}})
 # @app.get("/datasets/{dataset_id}/download/clean")
 # def download_clean(dataset_id: str):
 #     clean_path = os.path.join(datasetdir(dataset_id), "clean.csv")
 #     if not os.path.exists(clean_path):
 #         raise HTTPException(status_code=404, detail="Run ETL first")
 #     return FileResponse(path=clean_path, media_type="text/csv", filename=f"{dataset_id}_clean.csv")
-
-
 # @app.get("/datasets/{dataset_id}/download/raw")
 # def download_raw(dataset_id: str):
 #     raw_path = f"data/{dataset_id}.csv"
 #     if not os.path.exists(raw_path):
 #         raise HTTPException(status_code=404, detail="Raw file not found")
 #     return FileResponse(path=raw_path, media_type="text/csv", filename=f"{dataset_id}_raw.csv")
-
-# # (… keep your train/meta/predict as already working …)
-
-# # =====================================================
-# # MULTI-MODEL TRAINING (Clean data priority!)
-# # =====================================================
+# @app.get("/meta/{dataset_id}")
+# def get_model_meta(dataset_id: str):
+#     model_path = f"models/{dataset_id}.pkl"
+#     if not os.path.exists(model_path):
+#         return safe_encoder({"status": "error", "message": "No trained model found"})
+  
+#     try:
+#         info = joblib.load(model_path)
+#         return safe_encoder({
+#             "status": "ok",
+#             "target": info.get('target'),
+#             "task": info.get('task'),
+#             "best_model": info.get('best_model'),
+#             "model_leaderboard": info.get('full_results', {}),
+#             "features": info.get('features', []),
+#             "trained_on": info.get('trained_on', 'unknown')
+#         })
+#     except:
+#         return safe_encoder({"status": "error", "message": "Failed to load model metadata"})
 # @app.post("/train/{dataset_id}")
 # def train_model(dataset_id: str, data: dict = None):
 #     try:
-#         # ✅ Priority: clean.csv → raw.csv
+#         # Data source priority: clean.csv > raw.csv
 #         clean_path = os.path.join(datasetdir(dataset_id), "clean.csv")
 #         raw_path = f"data/{dataset_id}.csv"
-        
+      
 #         if os.path.exists(clean_path):
 #             df = pd.read_csv(clean_path)
 #             data_source = "clean.csv"
@@ -517,7 +813,10 @@
 #             data_source = "raw.csv"
 #         else:
 #             return safe_encoder({"status": "error", "message": "Dataset not found"})
-        
+      
+#         print(f"Loaded {len(df)} rows from {data_source}")
+      
+#         # Auto target selection
 #         user_target = data.get("target") if data else None
 #         if user_target and user_target in df.columns:
 #             target_col = user_target
@@ -526,17 +825,30 @@
 #             exclude = ['Id', 'id', 'ID', 'index']
 #             candidates = [c for c in numeric_cols if c.lower() not in [e.lower() for e in exclude]]
 #             target_col = max(candidates, key=lambda c: df[c].std()) if candidates else None
-        
+      
 #         if not target_col:
-#             return safe_encoder({"status": "error", "message": "No suitable target column found"})
-        
+#             return safe_encoder({"status": "error", "message": "No suitable numeric target column found"})
+      
+#         print(f"Target selected: {target_col}")
+      
 #         feature_cols = [col for col in df.columns if col != target_col]
 #         X = df[feature_cols].copy()
-#         y = df[target_col]
-        
+#         y = df[target_col].copy()
+      
+#         # 🔥 NaN-PROOF: Remove rows where TARGET is NaN
+#         valid_mask = ~y.isna()
+#         X = X[valid_mask]
+#         y = y[valid_mask]
+      
+#         print(f"After NaN removal: {len(X)} valid rows")
+      
+#         if len(X) < 10:
+#             return safe_encoder({"status": "error", "message": f"Only {len(X)} valid rows after NaN removal. Need 10+ rows."})
+      
+#         # Preprocessing pipeline
 #         safe_numeric = X.select_dtypes(include=['number']).columns.tolist()
 #         safe_categorical = [c for c in X.select_dtypes(include=['object']).columns if X[c].nunique() < 20]
-        
+      
 #         transformers = []
 #         if safe_numeric:
 #             transformers.append(('num', Pipeline([
@@ -548,47 +860,79 @@
 #                 ('imputer', SimpleImputer(strategy='most_frequent')),
 #                 ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
 #             ]), safe_categorical))
-        
+      
 #         preprocessor = ColumnTransformer(transformers, remainder='drop')
 #         task = "classification" if y.nunique() <= 10 else "regression"
-        
-#         # ✅ MULTI-MODEL COMPETITION
+      
+#         print(f"Task: {task} | Features: {len(safe_numeric)} numeric + {len(safe_categorical)} categorical")
+      
+#         # SPLIT AFTER CLEANING
+#         X_train, X_test, y_train, y_test = train_test_split(
+#             X, y, test_size=0.2, random_state=42, 
+#             stratify=y if task == "classification" else None
+#         )
+      
+#         # 3 MODEL BATTLE
 #         models = {
 #             "rf": RandomForestClassifier(n_estimators=100, random_state=42) if task == "classification" else RandomForestRegressor(n_estimators=100, random_state=42),
 #             "xgb": xgb.XGBClassifier(n_estimators=100, random_state=42, eval_metric="logloss") if task == "classification" else xgb.XGBRegressor(n_estimators=100, random_state=42),
 #             "lgb": LGBMClassifier(n_estimators=100, random_state=42, verbose=-1) if task == "classification" else LGBMRegressor(n_estimators=100, random_state=42, verbose=-1)
 #         }
-        
+      
 #         results = {}
 #         best_score = -np.inf
 #         best_pipeline = None
 #         best_model_name = None
-        
-#         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-        
+      
 #         for name, model in models.items():
+#             print(f"Training {name}...")
 #             pipe = Pipeline([('preprocessor', preprocessor), ('model', model)])
 #             pipe.fit(X_train, y_train)
 #             y_pred = pipe.predict(X_test)
-#             score = accuracy_score(y_test, y_pred) if task == "classification" else r2_score(y_test, y_pred)
-#             results[name] = {"score": float(score)}
-            
-#             if score > best_score:
-#                 best_score = score
+          
+#             # COMPLETE METRICS
+#             if task == "classification":
+#                 acc = accuracy_score(y_test, y_pred)
+#                 prec, rec, f1, _ = precision_recall_fscore_support(y_test, y_pred, average='macro')
+#                 metrics = {
+#                     'accuracy': float(acc), 'precision_macro': float(prec),
+#                     'recall_macro': float(rec), 'f1_macro': float(f1),
+#                     'confusion_matrix': confusion_matrix(y_test, y_pred).tolist()
+#                 }
+#                 primary_score = acc
+#             else:
+#                 r2 = r2_score(y_test, y_pred)
+#                 mse = mean_squared_error(y_test, y_pred)
+#                 mae = mean_absolute_error(y_test, y_pred)
+#                 metrics = {'r2': float(r2), 'mse': float(mse), 'rmse': float(np.sqrt(mse)), 'mae': float(mae)}
+#                 primary_score = r2
+          
+#             results[name] = {
+#                 'primary_score': float(primary_score),
+#                 'all_metrics': metrics,
+#                 'test_samples': len(X_test),
+#                 'train_samples': len(X_train),
+#                 'pred_samples': y_pred[:10].tolist(),
+#                 'true_vs_pred': list(zip(y_test.iloc[:10].tolist(), y_pred[:10].tolist()))
+#             }
+          
+#             print(f"{name}: {primary_score:.4f}")
+          
+#             if primary_score > best_score:
+#                 best_score = primary_score
 #                 best_pipeline = pipe
 #                 best_model_name = name
-        
+      
+#         # SAVE BEST MODEL + FULL RESULTS
 #         model_path = f"models/{dataset_id}.pkl"
 #         joblib.dump({
-#             'pipeline': best_pipeline,
-#             'target': target_col,
-#             'task': task,
-#             'best_model': best_model_name,
-#             'scores': results,
-#             'features': feature_cols,
-#             'trained_on': data_source
+#             'pipeline': best_pipeline, 'target': target_col, 'task': task,
+#             'best_model': best_model_name, 'full_results': results,
+#             'features': feature_cols, 'trained_on': data_source
 #         }, model_path)
-        
+      
+#         print(f"Saved best model: {best_model_name} ({best_score:.4f})")
+      
 #         return safe_encoder({
 #             "status": "ok",
 #             "target": target_col,
@@ -597,112 +941,75 @@
 #             "best_model": best_model_name.upper(),
 #             "model_leaderboard": results,
 #             "trained_on": data_source,
-#             "features_used": len(safe_numeric) + len(safe_categorical),
-#             "message": f"🏆 {best_model_name.upper()} WINS with {best_score:.4f}!"
+#             "valid_rows": len(X),
+#             "message": f"🏆 {best_model_name.upper()} WINS with {best_score:.4f} ({len(X)} valid rows)!"
 #         })
-        
+      
 #     except Exception as e:
-#         return safe_encoder({"status": "error", "message": str(e)[:200]})
-
-# # =====================================================
-# # MODEL META
-# # =====================================================
-# @app.get("/meta/{dataset_id}")
-# def get_model_meta(dataset_id: str):
-#     model_path = f"models/{dataset_id}.pkl"
-#     if not os.path.exists(model_path):
-#         raise HTTPException(status_code=404, detail="No trained model")
-    
-#     try:
-#         info = joblib.load(model_path)
-#         return safe_encoder({
-#             "status": "ok",
-#             "target": info.get('target'),
-#             "task": info.get('task'),
-#             "best_model": info.get('best_model'),
-#             "model_leaderboard": info.get('scores', {}),
-#             "features": info.get('features', [])
-#         })
-#     except Exception as e:
-#         raise HTTPException(status_code=500, detail="Failed to load metadata")
-
-# # =====================================================
-# # PREDICT
-# # =====================================================
+#         print(f"TRAIN ERROR: {str(e)}")
+#         print(traceback.format_exc())
+#         return safe_encoder({"status": "error", "message": f"Training failed: {str(e)[:150]}"})
 # @app.post("/predict/{dataset_id}")
 # def predict(dataset_id: str, data: dict):
 #     model_path = f"models/{dataset_id}.pkl"
 #     if not os.path.exists(model_path):
-#         raise HTTPException(status_code=404, detail="Model not trained")
-    
+#         return safe_encoder({"status": "error", "message": "Model not trained"})
+  
 #     try:
 #         model_info = joblib.load(model_path)
 #         pipeline = model_info['pipeline']
-        
 #         input_data = data.get("input_data", {})
 #         input_df = pd.DataFrame([input_data])
-        
 #         prediction = pipeline.predict(input_df)[0]
-        
+      
 #         return safe_encoder({
 #             "status": "ok",
 #             "prediction": float(prediction),
 #             "target": model_info.get('target'),
 #             "task": model_info.get('task'),
-#             "model_used": model_info.get('best_model')
+#             "model_used": model_info.get('best_model'),
+#             "confidence": "N/A"  # Add later
 #         })
 #     except Exception as e:
 #         return safe_encoder({"status": "error", "message": f"Prediction failed: {str(e)[:100]}"})
-
-# # =====================================================
-# # RUN SERVER
-# # =====================================================
 # if __name__ == "__main__":
-#     import uvicorn
-#     uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
-# backend/app.py - COMPLETE NaN-PROOF VERSION
+#from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.encoders import jsonable_encoder
 
 import os
-import json
 import uuid
+import json
 import math
+import time
 import pandas as pd
 import numpy as np
 import joblib
-import traceback
 
-from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from sklearn.impute import SimpleImputer
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    accuracy_score, r2_score, mean_squared_error, mean_absolute_error,
-    confusion_matrix, precision_recall_fscore_support
+from sklearn.metrics import accuracy_score, r2_score
+from sklearn.ensemble import (
+    RandomForestClassifier,
+    RandomForestRegressor,
+    GradientBoostingClassifier,
+    GradientBoostingRegressor,
 )
 
-import xgboost as xgb
-from lightgbm import LGBMClassifier, LGBMRegressor
+from backend.services.cleaning import full_etl
+from backend.services.utils import datasetdir, load_raw, load_clean
 
-try:
-    from backend.services.cleaning import full_etl
-    from backend.services.utils import datasetdir
-except ImportError:
-    # Fallback for missing services
-    def full_etl(dataset_id): return {"status": "success"}
-    def datasetdir(dataset_id): return f"data/{dataset_id}"
+app = FastAPI(title="OmniSearch AI – Enterprise ML API")
 
-app = FastAPI(title="OmniSearch AI 🚀")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8501", "*"],
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -710,290 +1017,221 @@ app.add_middleware(
 os.makedirs("data", exist_ok=True)
 os.makedirs("models", exist_ok=True)
 
-def safe_float(val):
-    if isinstance(val, float) and (math.isnan(val) or math.isinf(val)):
-        return None
-    return val
+# -------------------------------------------------
+# SAFE JSON
+# -------------------------------------------------
+def safe(obj):
+    return jsonable_encoder(
+        obj,
+        custom_encoder={
+            float: lambda x: None if (math.isnan(x) or math.isinf(x)) else x,
+            np.integer: int,
+            np.floating: float,
+            np.bool_: bool,
+        },
+    )
 
-def safe_encoder(obj):
-    return jsonable_encoder(obj, custom_encoder={float: safe_float})
-
+# -------------------------------------------------
+# UPLOAD
+# -------------------------------------------------
 @app.post("/upload")
-async def upload_csv(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...)):
     dataset_id = str(uuid.uuid4())[:8]
-    raw_path = f"data/{dataset_id}.csv"
-    
-    with open(raw_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
-    
-    try:
-        df_preview = pd.read_csv(raw_path, nrows=5).replace({np.nan: None})
-        total_rows = len(pd.read_csv(raw_path))
-        return safe_encoder({
-            "status": "ok", "dataset_id": dataset_id,
-            "original_filename": file.filename,
-            "columns": list(df_preview.columns),
-            "preview": df_preview.head(2).to_dict("records"),
-            "rows": total_rows
-        })
-    except Exception as e:
-        return safe_encoder({"status": "ok", "dataset_id": dataset_id, "rows": 0, "warning": str(e)})
+    path = f"data/{dataset_id}.csv"
 
+    with open(path, "wb") as f:
+        f.write(await file.read())
+
+    try:
+        df = pd.read_csv(path, nrows=5)
+    except Exception:
+        raise HTTPException(400, "Invalid CSV file")
+
+    return safe({
+        "status": "ok",
+        "dataset_id": dataset_id,
+        "columns": df.columns.tolist(),
+        "preview": df.to_dict("records"),
+    })
+
+# -------------------------------------------------
+# EDA
+# -------------------------------------------------
 @app.get("/eda/{dataset_id}")
-def run_eda(dataset_id: str):
+def eda(dataset_id: str):
     try:
-        ds_dir = datasetdir(dataset_id)
-        clean_path = os.path.join(ds_dir, "clean.csv")
-        raw_path = f"data/{dataset_id}.csv"
+        df = load_clean(dataset_id)
+        source = "CLEAN"
+        etl_done = True
+    except:
+        df = load_raw(dataset_id)
+        source = "RAW"
+        etl_done = False
 
-        if os.path.exists(clean_path):
-            df = pd.read_csv(clean_path)
-            source = "CLEAN"
-        elif os.path.exists(raw_path):
-            df = pd.read_csv(raw_path)
-            source = "RAW"
-        else:
-            raise HTTPException(status_code=404, detail="Dataset not found")
+    missing = df.isna().sum()
+    missing_pct = (missing.sum() / max(1, df.size)) * 100
 
-        total_missing = df.isnull().sum().sum()
-        missing_pct = total_missing / (len(df) * len(df.columns)) * 100 if len(df) > 0 else 0
-        quality_score = max(0, min(100, 100 - missing_pct))
+    return safe({
+        "status": "ok",
+        "eda": {
+            "rows": len(df),
+            "columns": len(df.columns),
+            "missing": missing.to_dict(),
+            "missing_pct": round(missing_pct, 2),
+            "quality_score": round(100 - missing_pct, 1),
+            "data_source": source,
+            "etl_complete": etl_done,
+            "summary": df.describe().to_dict(),
+        }
+    })
 
-        return safe_encoder({
-            "status": "ok", "eda": {
-                "rows": int(len(df)), "columns": int(len(df.columns)),
-                "missing": df.isnull().sum().replace({np.nan: None}).to_dict(),
-                "missing_pct": round(missing_pct, 2), "quality_score": round(quality_score, 1),
-                "data_source": source, "etl_complete": os.path.exists(clean_path),
-                "summary": df.describe().round(2).replace({np.nan: None}).to_dict()
-            }
-        })
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
+# -------------------------------------------------
+# ETL
+# -------------------------------------------------
 @app.post("/datasets/{dataset_id}/clean")
 def run_etl(dataset_id: str):
-    try:
-        result = full_etl(dataset_id)
-        return safe_encoder(result)
-    except:
-        return safe_encoder({"status": "success", "message": "ETL stub - working"})
+    return safe(full_etl(dataset_id))
 
 @app.get("/datasets/{dataset_id}/comparison")
-def get_comparison(dataset_id: str):
-    return safe_encoder({"status": "ok", "improvements": {"outliers_fixed": 1702, "missing_filled": 456}})
+def comparison(dataset_id: str):
+    path = os.path.join(datasetdir(dataset_id), "comparison.json")
+    if not os.path.exists(path):
+        raise HTTPException(404, "Run ETL first")
+    return safe(json.load(open(path)))
 
-@app.get("/datasets/{dataset_id}/download/clean")
-def download_clean(dataset_id: str):
-    clean_path = os.path.join(datasetdir(dataset_id), "clean.csv")
-    if not os.path.exists(clean_path):
-        raise HTTPException(status_code=404, detail="Run ETL first")
-    return FileResponse(path=clean_path, media_type="text/csv", filename=f"{dataset_id}_clean.csv")
+@app.get("/datasets/{dataset_id}/download/{kind}")
+def download(dataset_id: str, kind: str):
+    if kind == "raw":
+        path = f"data/{dataset_id}.csv"
+    elif kind == "clean":
+        path = os.path.join(datasetdir(dataset_id), "clean.csv")
+    else:
+        raise HTTPException(400, "Invalid download type")
 
-@app.get("/datasets/{dataset_id}/download/raw")
-def download_raw(dataset_id: str):
-    raw_path = f"data/{dataset_id}.csv"
-    if not os.path.exists(raw_path):
-        raise HTTPException(status_code=404, detail="Raw file not found")
-    return FileResponse(path=raw_path, media_type="text/csv", filename=f"{dataset_id}_raw.csv")
+    if not os.path.exists(path):
+        raise HTTPException(404, "File not found")
 
-@app.get("/meta/{dataset_id}")
-def get_model_meta(dataset_id: str):
-    model_path = f"models/{dataset_id}.pkl"
-    if not os.path.exists(model_path):
-        return safe_encoder({"status": "error", "message": "No trained model found"})
-    
-    try:
-        info = joblib.load(model_path)
-        return safe_encoder({
-            "status": "ok",
-            "target": info.get('target'),
-            "task": info.get('task'),
-            "best_model": info.get('best_model'),
-            "model_leaderboard": info.get('full_results', {}),
-            "features": info.get('features', []),
-            "trained_on": info.get('trained_on', 'unknown')
-        })
-    except:
-        return safe_encoder({"status": "error", "message": "Failed to load model metadata"})
+    return FileResponse(path, filename=os.path.basename(path))
 
+# -------------------------------------------------
+# TRAIN — ENTERPRISE AutoML
+# -------------------------------------------------
 @app.post("/train/{dataset_id}")
-def train_model(dataset_id: str, data: dict = None):
-    try:
-        # Data source priority: clean.csv > raw.csv
-        clean_path = os.path.join(datasetdir(dataset_id), "clean.csv")
-        raw_path = f"data/{dataset_id}.csv"
-        
-        if os.path.exists(clean_path):
-            df = pd.read_csv(clean_path)
-            data_source = "clean.csv"
-        elif os.path.exists(raw_path):
-            df = pd.read_csv(raw_path)
-            data_source = "raw.csv"
-        else:
-            return safe_encoder({"status": "error", "message": "Dataset not found"})
-        
-        print(f"Loaded {len(df)} rows from {data_source}")
-        
-        # Auto target selection
-        user_target = data.get("target") if data else None
-        if user_target and user_target in df.columns:
-            target_col = user_target
-        else:
-            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-            exclude = ['Id', 'id', 'ID', 'index']
-            candidates = [c for c in numeric_cols if c.lower() not in [e.lower() for e in exclude]]
-            target_col = max(candidates, key=lambda c: df[c].std()) if candidates else None
-        
-        if not target_col:
-            return safe_encoder({"status": "error", "message": "No suitable numeric target column found"})
-        
-        print(f"Target selected: {target_col}")
-        
-        feature_cols = [col for col in df.columns if col != target_col]
-        X = df[feature_cols].copy()
-        y = df[target_col].copy()
-        
-        # 🔥 NaN-PROOF: Remove rows where TARGET is NaN
-        valid_mask = ~y.isna()
-        X = X[valid_mask]
-        y = y[valid_mask]
-        
-        print(f"After NaN removal: {len(X)} valid rows")
-        
-        if len(X) < 10:
-            return safe_encoder({"status": "error", "message": f"Only {len(X)} valid rows after NaN removal. Need 10+ rows."})
-        
-        # Preprocessing pipeline
-        safe_numeric = X.select_dtypes(include=['number']).columns.tolist()
-        safe_categorical = [c for c in X.select_dtypes(include=['object']).columns if X[c].nunique() < 20]
-        
-        transformers = []
-        if safe_numeric:
-            transformers.append(('num', Pipeline([
-                ('imputer', SimpleImputer(strategy='median')),
-                ('scaler', StandardScaler())
-            ]), safe_numeric))
-        if safe_categorical:
-            transformers.append(('cat', Pipeline([
-                ('imputer', SimpleImputer(strategy='most_frequent')),
-                ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-            ]), safe_categorical))
-        
-        preprocessor = ColumnTransformer(transformers, remainder='drop')
-        task = "classification" if y.nunique() <= 10 else "regression"
-        
-        print(f"Task: {task} | Features: {len(safe_numeric)} numeric + {len(safe_categorical)} categorical")
-        
-        # SPLIT AFTER CLEANING
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42, 
-            stratify=y if task == "classification" else None
-        )
-        
-        # 3 MODEL BATTLE
-        models = {
-            "rf": RandomForestClassifier(n_estimators=100, random_state=42) if task == "classification" else RandomForestRegressor(n_estimators=100, random_state=42),
-            "xgb": xgb.XGBClassifier(n_estimators=100, random_state=42, eval_metric="logloss") if task == "classification" else xgb.XGBRegressor(n_estimators=100, random_state=42),
-            "lgb": LGBMClassifier(n_estimators=100, random_state=42, verbose=-1) if task == "classification" else LGBMRegressor(n_estimators=100, random_state=42, verbose=-1)
-        }
-        
-        results = {}
-        best_score = -np.inf
-        best_pipeline = None
-        best_model_name = None
-        
-        for name, model in models.items():
-            print(f"Training {name}...")
-            pipe = Pipeline([('preprocessor', preprocessor), ('model', model)])
-            pipe.fit(X_train, y_train)
-            y_pred = pipe.predict(X_test)
-            
-            # COMPLETE METRICS
-            if task == "classification":
-                acc = accuracy_score(y_test, y_pred)
-                prec, rec, f1, _ = precision_recall_fscore_support(y_test, y_pred, average='macro')
-                metrics = {
-                    'accuracy': float(acc), 'precision_macro': float(prec),
-                    'recall_macro': float(rec), 'f1_macro': float(f1),
-                    'confusion_matrix': confusion_matrix(y_test, y_pred).tolist()
-                }
-                primary_score = acc
-            else:
-                r2 = r2_score(y_test, y_pred)
-                mse = mean_squared_error(y_test, y_pred)
-                mae = mean_absolute_error(y_test, y_pred)
-                metrics = {'r2': float(r2), 'mse': float(mse), 'rmse': float(np.sqrt(mse)), 'mae': float(mae)}
-                primary_score = r2
-            
-            results[name] = {
-                'primary_score': float(primary_score),
-                'all_metrics': metrics,
-                'test_samples': len(X_test),
-                'train_samples': len(X_train),
-                'pred_samples': y_pred[:10].tolist(),
-                'true_vs_pred': list(zip(y_test.iloc[:10].tolist(), y_pred[:10].tolist()))
-            }
-            
-            print(f"{name}: {primary_score:.4f}")
-            
-            if primary_score > best_score:
-                best_score = primary_score
-                best_pipeline = pipe
-                best_model_name = name
-        
-        # SAVE BEST MODEL + FULL RESULTS
-        model_path = f"models/{dataset_id}.pkl"
-        joblib.dump({
-            'pipeline': best_pipeline, 'target': target_col, 'task': task,
-            'best_model': best_model_name, 'full_results': results,
-            'features': feature_cols, 'trained_on': data_source
-        }, model_path)
-        
-        print(f"Saved best model: {best_model_name} ({best_score:.4f})")
-        
-        return safe_encoder({
-            "status": "ok",
-            "target": target_col,
-            "task": task,
-            "best_score": round(float(best_score), 4),
-            "best_model": best_model_name.upper(),
-            "model_leaderboard": results,
-            "trained_on": data_source,
-            "valid_rows": len(X),
-            "message": f"🏆 {best_model_name.upper()} WINS with {best_score:.4f} ({len(X)} valid rows)!"
-        })
-        
-    except Exception as e:
-        print(f"TRAIN ERROR: {str(e)}")
-        print(traceback.format_exc())
-        return safe_encoder({"status": "error", "message": f"Training failed: {str(e)[:150]}"})
+def train(dataset_id: str, payload: dict):
+    target = payload.get("target")
+    if not target:
+        raise HTTPException(400, "Target column required")
 
+    try:
+        df = load_clean(dataset_id)
+        source = "CLEAN"
+    except:
+        df = load_raw(dataset_id)
+        source = "RAW"
+
+    if target not in df.columns:
+        raise HTTPException(400, "Target not found")
+
+    X = df.drop(columns=[target])
+    y = df[target].dropna()
+    X = X.loc[y.index]
+
+    task = "classification" if y.nunique() <= 15 else "regression"
+
+    num = X.select_dtypes(include="number").columns
+    cat = X.select_dtypes(include="object").columns
+
+    pre = ColumnTransformer([
+        ("num", Pipeline([
+            ("imp", SimpleImputer(strategy="median")),
+            ("sc", StandardScaler())
+        ]), num),
+        ("cat", Pipeline([
+            ("imp", SimpleImputer(strategy="most_frequent")),
+            ("oh", OneHotEncoder(handle_unknown="ignore"))
+        ]), cat),
+    ])
+
+    models = {
+        "random_forest": RandomForestClassifier() if task == "classification" else RandomForestRegressor(),
+        "gradient_boost": GradientBoostingClassifier() if task == "classification" else GradientBoostingRegressor(),
+    }
+
+    metric = accuracy_score if task == "classification" else r2_score
+
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    leaderboard = {}
+    best_score = -1
+    champion = None
+    champion_name = None
+
+    for name, model in models.items():
+        pipe = Pipeline([("pre", pre), ("model", model)])
+        pipe.fit(Xtr, ytr)
+        score = metric(yte, pipe.predict(Xte))
+
+        leaderboard[name] = round(float(score), 4)
+
+        if score > best_score:
+            best_score = score
+            champion = pipe
+            champion_name = name
+
+    model_root = f"models/{dataset_id}"
+    os.makedirs(model_root, exist_ok=True)
+    version = f"v{len(os.listdir(model_root)) + 1}"
+    version_dir = f"{model_root}/{version}"
+    os.makedirs(version_dir)
+
+    joblib.dump(champion, f"{version_dir}/model.pkl")
+
+    metadata = {
+        "status": "ok",
+        "dataset_id": dataset_id,
+        "version": version,
+        "task": task,
+        "target": target,
+        "best_model": champion_name,
+        "best_score": round(best_score, 4),
+        "data_source": source,
+        "leaderboard": leaderboard,
+        "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+    json.dump(metadata, open(f"{version_dir}/metadata.json", "w"), indent=2)
+    return safe(metadata)
+
+# -------------------------------------------------
+# META
+# -------------------------------------------------
+@app.get("/meta/{dataset_id}")
+def meta(dataset_id: str):
+    root = f"models/{dataset_id}"
+    if not os.path.exists(root):
+        raise HTTPException(404, "Model not trained")
+
+    latest = sorted(os.listdir(root))[-1]
+    return safe(json.load(open(f"{root}/{latest}/metadata.json")))
+
+# -------------------------------------------------
+# PREDICT
+# -------------------------------------------------
 @app.post("/predict/{dataset_id}")
-def predict(dataset_id: str, data: dict):
-    model_path = f"models/{dataset_id}.pkl"
-    if not os.path.exists(model_path):
-        return safe_encoder({"status": "error", "message": "Model not trained"})
-    
-    try:
-        model_info = joblib.load(model_path)
-        pipeline = model_info['pipeline']
-        input_data = data.get("input_data", {})
-        input_df = pd.DataFrame([input_data])
-        prediction = pipeline.predict(input_df)[0]
-        
-        return safe_encoder({
-            "status": "ok",
-            "prediction": float(prediction),
-            "target": model_info.get('target'),
-            "task": model_info.get('task'),
-            "model_used": model_info.get('best_model'),
-            "confidence": "N/A"  # Add later
-        })
-    except Exception as e:
-        return safe_encoder({"status": "error", "message": f"Prediction failed: {str(e)[:100]}"})
+def predict(dataset_id: str, payload: dict):
+    root = f"models/{dataset_id}"
+    latest = sorted(os.listdir(root))[-1]
+    model = joblib.load(f"{root}/{latest}/model.pkl")
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    X = pd.DataFrame([payload])
+    preds = model.predict(X)
+
+    confidence = None
+    if hasattr(model["model"], "predict_proba"):
+        confidence = float(model["model"].predict_proba(model["pre"].transform(X))[0].max())
+
+    return safe({
+        "prediction": preds.tolist(),
+        "confidence": confidence,
+        "model_version": latest,
+    })
