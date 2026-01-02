@@ -1,0 +1,23 @@
+{
+  "status": "ok",
+  "dataset_id": "1fd39045",
+  "version": "v1",
+  "task": "classification",
+  "target": "YrSold",
+  "best_model": "gradient_boost",
+  "best_score": 1.0,
+  "data_source": "CLEAN",
+  "leaderboard": {
+    "random_forest": {
+      "primary_score": 0.8938,
+      "train_samples": 1167,
+      "test_samples": 292
+    },
+    "gradient_boost": {
+      "primary_score": 1.0,
+      "train_samples": 1167,
+      "test_samples": 292
+    }
+  },
+  "trained_at": "2026-01-02 18:52:14"
+}

@@ -1,37 +1,31 @@
 import streamlit as st
 import requests
 import pandas as pd
+import plotly.express as px
 
-API = "http://127.0.0.1:8000"
-st.title("💡 Model Explainability")
+API = "http://127.0.0.1:8000/api"
+dataset_id = st.session_state.get("dataset_id")
 
-if 'dataset_id' not in st.session_state:
+st.title("🔍 Model Explainability (SHAP)")
+
+resp = requests.get(f"{API}/explain/{dataset_id}")
+if resp.status_code != 200:
+    st.error("Run training first")
     st.stop()
 
-dataset_id = st.session_state.dataset_id
+data = resp.json()
 
-meta_resp = requests.get(f"{API}/meta/{dataset_id}")
-if meta_resp.status_code != 200:
-    st.warning("Train a model first")
-    st.stop()
-
-meta = meta_resp.json()
-top_features = meta.get("top_features", [])
-target = meta["target"]
-task = meta["task"]
-
-st.markdown(f"**🎯 Target**: {target}")
-st.markdown(f"**📊 Task Type**: {task.title()}")
-
-if not top_features:
-    st.info("No explainability available for this model.")
-    st.stop()
-
-st.subheader("🏆 Top Influencing Features")
 df = pd.DataFrame({
-    "Feature": top_features,
-    "Importance Rank": range(1, len(top_features) + 1)
-})
-st.dataframe(df, use_container_width=True)
+    "Feature": data["features"],
+    "Importance": data["importance"]
+}).sort_values("Importance", ascending=False).head(20)
 
-st.info("💡 These features were selected based on model-derived importance, not manual selection.")
+fig = px.bar(
+    df,
+    x="Importance",
+    y="Feature",
+    orientation="h",
+    title="Top 20 Feature Importances (SHAP)"
+)
+
+st.plotly_chart(fig, use_container_width=True)

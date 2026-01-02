@@ -92,41 +92,63 @@
 #                            json={"input_data": input_data})
 #         st.success(f"🎯 **{meta['target']}:** {resp.json()['prediction']}")
 
-
 import streamlit as st
 import requests
+import ast
+import json
 
 API = "http://127.0.0.1:8000/api"
 
-st.header("🔮 Predict")
+st.set_page_config(
+    page_title="OmniSearch AI – Prediction",
+    layout="wide"
+)
+
+st.markdown("## 🔮 Model Inference")
 
 dataset_id = st.session_state.get("dataset_id")
 
 if not dataset_id:
-    st.warning("Upload dataset first.")
+    st.error("🚫 Upload and train a dataset first.")
     st.stop()
 
-st.write("Enter feature values as JSON:")
+st.markdown(
+    """
+    Enter **feature values as JSON**.
+    Keys must exactly match training feature names.
+    """
+)
 
-example = {"feature1": 10, "feature2": 20}
-input_json = st.text_area("Input JSON", value=str(example))
+example = {
+    "feature_1": 10,
+    "feature_2": 25
+}
 
-if st.button("Predict"):
+input_json = st.text_area(
+    "Input JSON",
+    value=json.dumps(example, indent=2),
+    height=200
+)
+
+if st.button("Predict", type="primary"):
     try:
-        payload = {
-            "input_data": eval(input_json)
-        }
+        payload = ast.literal_eval(input_json)
+
+        if not isinstance(payload, dict):
+            raise ValueError("Input must be a JSON object")
 
         res = requests.post(
             f"{API}/predict/{dataset_id}",
-            json=payload
+            json=payload,
+            timeout=30
         )
 
-        if res.status_code == 200:
-            st.success("Prediction successful")
-            st.json(res.json())
-        else:
-            st.error("Prediction failed")
+        if res.status_code != 200:
+            st.error(f"Backend error:\n{res.text}")
+            st.stop()
+
+        st.success("✅ Prediction successful")
+        st.json(res.json())
 
     except Exception as e:
         st.error(f"Invalid input: {e}")

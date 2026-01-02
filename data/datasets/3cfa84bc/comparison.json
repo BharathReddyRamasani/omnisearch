@@ -1,0 +1,16 @@
+{
+  "raw_stats": {
+    "rows": 1459,
+    "missing_total": 7878,
+    "duplicate_rows": 0
+  },
+  "clean_stats": {
+    "rows": 1459,
+    "missing_total": 0,
+    "duplicate_rows": 0
+  },
+  "improvements": {
+    "missing_values_filled": 7878,
+    "duplicates_removed": 0
+  }
+}

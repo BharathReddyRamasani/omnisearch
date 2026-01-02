@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "dataset_id": "3cfa84bc",
+  "version": "v4",
+  "task": "classification",
+  "target": "YrSold",
+  "best_model": "RandomForest",
+  "best_score": 0.863,
+  "leaderboard": {
+    "RandomForest": 0.863
+  },
+  "trained_at": "2026-01-02 19:44:36"
+}
