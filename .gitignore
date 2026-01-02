@@ -1,10 +1,13 @@
 # Python
 venv/
 frontend/venv/
-.env/
 __pycache__/
 *.pyc
+*.pyd
 *.dll
 
 # Node
 node_modules/
+
+# Env
+.env
