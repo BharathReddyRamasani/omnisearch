@@ -1,0 +1,67 @@
+{
+  "status": "ok",
+  "task": "classification",
+  "target": "YrSold",
+  "best_model": "RandomForest",
+  "best_score": 0.3322,
+  "leaderboard": [
+    {
+      "model": "LogisticRegression",
+      "primary_score": 0.2192,
+      "train_score": 0.5342,
+      "test_score": 0.2192,
+      "metrics": {
+        "accuracy": 0.2192,
+        "precision": 0.2188,
+        "recall": 0.2153,
+        "f1": 0.2145
+      },
+      "train_rows": 1168,
+      "test_rows": 292
+    },
+    {
+      "model": "DecisionTree",
+      "primary_score": 0.3116,
+      "train_score": 1.0,
+      "test_score": 0.3116,
+      "metrics": {
+        "accuracy": 0.3116,
+        "precision": 0.306,
+        "recall": 0.3037,
+        "f1": 0.3012
+      },
+      "train_rows": 1168,
+      "test_rows": 292
+    },
+    {
+      "model": "RandomForest",
+      "primary_score": 0.3322,
+      "train_score": 1.0,
+      "test_score": 0.3322,
+      "metrics": {
+        "accuracy": 0.3322,
+        "precision": 0.3435,
+        "recall": 0.3144,
+        "f1": 0.3138
+      },
+      "train_rows": 1168,
+      "test_rows": 292
+    },
+    {
+      "model": "GradientBoosting",
+      "primary_score": 0.2945,
+      "train_score": 0.863,
+      "test_score": 0.2945,
+      "metrics": {
+        "accuracy": 0.2945,
+        "precision": 0.2886,
+        "recall": 0.2869,
+        "f1": 0.2871
+      },
+      "train_rows": 1168,
+      "test_rows": 292
+    }
+  ],
+  "trained_on": "CLEAN",
+  "trained_at": "2026-01-03 19:34:00"
+}
