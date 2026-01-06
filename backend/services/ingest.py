@@ -5,10 +5,7 @@ import uuid
 import pandas as pd
 from fastapi import UploadFile, HTTPException
 from charset_normalizer import from_bytes
-from backend.services.utils import dataset_dir
-
-
-from backend.services.utils import dataset_dir
+from backend.services.utils import raw_path, datasetdir
 
 # ---------------------------
 # Helpers
@@ -48,7 +45,7 @@ async def process_upload(file: UploadFile):
         raise HTTPException(status_code=400, detail="No file uploaded")
 
     dataset_id = str(uuid.uuid4())[:8]
-    dpath = dataset_dir(dataset_id)
+    raw_p = raw_path(dataset_id)
 
     # Read file bytes
     raw = await file.read()
@@ -70,8 +67,11 @@ async def process_upload(file: UploadFile):
     df = df.dropna(how="all")
 
     # Save raw
-    raw_path = os.path.join(dpath, "raw.csv")
-    df.to_csv(raw_path, index=False)
+    df.to_csv(raw_p, index=False)
+
+    # Also save to dataset dir for consistency
+    dpath = datasetdir(dataset_id)
+    df.to_csv(os.path.join(dpath, "raw.csv"), index=False)
 
     # Save schema
     schema = {c: str(df[c].dtype) for c in df.columns}

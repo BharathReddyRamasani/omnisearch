@@ -1,9 +1,9 @@
 import pandas as pd
 import numpy as np
-from backend.services.utils import load_df, clean_dataframe
+from backend.services.utils import load_raw
 
 def generate_eda(dataset_id: str):
-    df = clean_dataframe(load_df(dataset_id))
+    df = load_raw(dataset_id)
 
     total_missing = int(df.isnull().sum().sum())
     missing_pct = (

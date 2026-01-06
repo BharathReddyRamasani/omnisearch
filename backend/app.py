@@ -1651,26 +1651,16 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from fastapi.encoders import jsonable_encoder
 
-import os, uuid, json, math, time
+import os, json
 import pandas as pd
-import numpy as np
-import joblib
 
-from sklearn.pipeline import Pipeline
-from sklearn.compose import ColumnTransformer
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
-from sklearn.impute import SimpleImputer
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, f1_score, r2_score, mean_squared_error
-
-from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.ensemble import (
-    RandomForestClassifier, RandomForestRegressor,
-    GradientBoostingClassifier, GradientBoostingRegressor
-)
+from backend.services.ingest import process_upload
+from backend.services.eda import generate_eda
+from backend.services.cleaning import full_etl
+from backend.services.training import train_model_logic
+from backend.services.predict import make_prediction
+from backend.services.utils import safe, raw_path, datasetdir, model_dir
 
 # =====================================================
 # APP
@@ -1697,37 +1687,6 @@ os.makedirs(DATASETS, exist_ok=True)
 os.makedirs(MODELS, exist_ok=True)
 
 # =====================================================
-# SAFE JSON
-# =====================================================
-def safe(obj):
-    return jsonable_encoder(
-        obj,
-        custom_encoder={
-            float: lambda x: None if (math.isnan(x) or math.isinf(x)) else x,
-            np.integer: int,
-            np.floating: float,
-            np.bool_: bool,
-        },
-    )
-
-# =====================================================
-# HELPERS
-# =====================================================
-def raw_path(dataset_id):
-    return os.path.join(DATA, f"{dataset_id}.csv")
-
-def dataset_dir(dataset_id):
-    d = os.path.join(DATASETS, dataset_id)
-    os.makedirs(d, exist_ok=True)
-    return d
-
-def load_raw(dataset_id):
-    p = raw_path(dataset_id)
-    if not os.path.exists(p):
-        raise HTTPException(404, "Dataset not found")
-    return pd.read_csv(p)
-
-# =====================================================
 # UPLOAD
 # =====================================================
 @app.post("/api/upload")
@@ -1735,17 +1694,12 @@ async def upload(file: UploadFile = File(...)):
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(400, "Only CSV files allowed")
 
-    dataset_id = str(uuid.uuid4())[:8]
-    path = raw_path(dataset_id)
-
-    with open(path, "wb") as f:
-        f.write(await file.read())
-
-    preview = pd.read_csv(path, nrows=5)
+    result = await process_upload(file)
+    preview = pd.read_csv(raw_path(result["dataset_id"]), nrows=5)
 
     return safe({
         "status": "ok",
-        "dataset_id": dataset_id,
+        "dataset_id": result["dataset_id"],
         "columns": preview.columns.tolist(),
         "preview": preview.to_dict("records"),
     })
@@ -1755,83 +1709,18 @@ async def upload(file: UploadFile = File(...)):
 # =====================================================
 @app.get("/api/eda/{dataset_id}")
 def eda(dataset_id: str):
-    df = load_raw(dataset_id)
-    missing = df.isna().sum()
-    missing_pct = (missing.sum() / max(1, df.size)) * 100
-
-    return safe({
-        "status": "ok",
-        "eda": {
-            "rows": int(len(df)),
-            "columns": int(len(df.columns)),
-            "missing": missing.to_dict(),
-            "missing_pct": round(float(missing_pct), 2),
-            "quality_score": round(100 - missing_pct, 1),
-            "data_source": "RAW",
-            "etl_complete": False,
-            "summary": df.describe(include="all").to_dict(),
-        }
-    })
+    result = generate_eda(dataset_id)
+    return safe(result)
 
 # =====================================================
 # ETL
 # =====================================================
 @app.post("/api/datasets/{dataset_id}/clean")
 def run_etl(dataset_id: str):
-    df = load_raw(dataset_id)
-
-    raw_rows = len(df)
-    raw_missing = int(df.isna().sum().sum())
-    raw_dupes = int(df.duplicated().sum())
-
-    df_clean = df.drop_duplicates().copy()
-
-    filled = 0
-    for c in df_clean.select_dtypes(include="number"):
-        n = df_clean[c].isna().sum()
-        df_clean[c] = df_clean[c].fillna(df_clean[c].median())
-        filled += int(n)
-
-    for c in df_clean.select_dtypes(include="object"):
-        n = df_clean[c].isna().sum()
-        if not df_clean[c].mode().empty:
-            df_clean[c] = df_clean[c].fillna(df_clean[c].mode()[0])
-        filled += int(n)
-
-    ddir = dataset_dir(dataset_id)
-    df_clean.to_csv(os.path.join(ddir, "clean.csv"), index=False)
-
-    clean_missing = int(df_clean.isna().sum().sum())
-
-    comparison = {
-        "raw_stats": {
-            "rows": raw_rows,
-            "missing_total": raw_missing,
-            "duplicate_rows": raw_dupes,
-        },
-        "clean_stats": {
-            "rows": len(df_clean),
-            "missing_total": clean_missing,
-            "duplicate_rows": 0,
-        },
-        "improvements": {
-            "missing_values_filled": filled,
-            "duplicates_removed": raw_dupes,
-            "outliers_fixed": 0
-        },
-        "accuracy_lift_expected": round(
-            max(0.0, min(25.0, (raw_missing - clean_missing) / max(1, raw_rows) * 100)), 2
-        )
-    }
-
-    with open(os.path.join(ddir, "comparison.json"), "w") as f:
-        json.dump(comparison, f, indent=2)
-
-    return safe({
-        "status": "ok",
-        "dataset_id": dataset_id,
-        "comparison": comparison,
-    })
+    result = full_etl(dataset_id)
+    if result.get("status") != "ok":
+        raise HTTPException(status_code=400, detail=result.get("error", "ETL failed"))
+    return safe(result)
 
 # =====================================================
 # DOWNLOADS
@@ -1841,7 +1730,7 @@ def download(dataset_id: str, kind: str):
     if kind == "raw":
         p = raw_path(dataset_id)
     elif kind == "clean":
-        p = os.path.join(dataset_dir(dataset_id), "clean.csv")
+        p = os.path.join(datasetdir(dataset_id), "clean.csv")
     else:
         raise HTTPException(400, "Invalid type")
 
@@ -1852,7 +1741,7 @@ def download(dataset_id: str, kind: str):
 
 @app.get("/api/datasets/{dataset_id}/comparison")
 def comparison(dataset_id: str):
-    p = os.path.join(dataset_dir(dataset_id), "comparison.json")
+    p = os.path.join(datasetdir(dataset_id), "comparison.json")
     if not os.path.exists(p):
         raise HTTPException(404, "Run ETL first")
     return safe(json.load(open(p)))
@@ -1866,97 +1755,9 @@ def train(dataset_id: str, payload: dict):
     if not target:
         raise HTTPException(400, "Target required")
 
-    df = load_raw(dataset_id)
-    if target not in df.columns:
-        raise HTTPException(400, "Invalid target")
-
-    X = df.drop(columns=[target])
-    y = df[target]
-    mask = ~y.isna()
-    X, y = X[mask], y[mask]
-
-    if len(X) < 20:
-        raise HTTPException(400, "Not enough valid rows")
-
-    task = "classification" if y.nunique() <= 15 else "regression"
-
-    num = X.select_dtypes(include="number").columns.tolist()
-    cat = X.select_dtypes(include="object").columns.tolist()
-
-    pre = ColumnTransformer([
-        ("num", Pipeline([
-            ("imp", SimpleImputer(strategy="median")),
-            ("sc", StandardScaler())
-        ]), num),
-        ("cat", Pipeline([
-            ("imp", SimpleImputer(strategy="most_frequent")),
-            ("oh", OneHotEncoder(handle_unknown="ignore"))
-        ]), cat),
-    ])
-
-    if task == "classification":
-        models = {
-            "LogisticRegression": LogisticRegression(max_iter=1000),
-            "DecisionTree": DecisionTreeClassifier(),
-            "RandomForest": RandomForestClassifier(n_estimators=200),
-            "GradientBoosting": GradientBoostingClassifier(),
-        }
-        scorer = lambda yt, yp: accuracy_score(yt, yp)
-    else:
-        models = {
-            "LinearRegression": LinearRegression(),
-            "DecisionTree": DecisionTreeRegressor(),
-            "RandomForest": RandomForestRegressor(n_estimators=200),
-            "GradientBoosting": GradientBoostingRegressor(),
-        }
-        scorer = lambda yt, yp: r2_score(yt, yp)
-
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42)
-
-    leaderboard = []
-    best_score = -1e9
-    best_model = None
-    best_pipe = None
-
-    for name, model in models.items():
-        pipe = Pipeline([("pre", pre), ("model", model)])
-        pipe.fit(Xtr, ytr)
-        preds = pipe.predict(Xte)
-        score = scorer(yte, preds)
-
-        leaderboard.append({
-            "model": name,
-            "score": round(float(score), 4),
-            "train_rows": len(Xtr),
-            "test_rows": len(Xte)
-        })
-
-        if score > best_score:
-            best_score = score
-            best_model = name
-            best_pipe = pipe
-
-    root = os.path.join(MODELS, dataset_id)
-    os.makedirs(root, exist_ok=True)
-    joblib.dump(best_pipe, os.path.join(root, "model.pkl"))
-
-    result = {
-        "status": "ok",
-        "task": task,
-        "target": target,
-        "best_model": best_model,
-        "best_score": round(float(best_score), 4),
-        "leaderboard": leaderboard,
-        "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "explanation": {
-            "why_best": f"{best_model} achieved the highest validation score.",
-            "why_not_others": "Other models underperformed on the same dataset and split."
-        }
-    }
-
-    with open(os.path.join(root, "metadata.json"), "w") as f:
-        json.dump(result, f, indent=2)
-
+    result = train_model_logic(dataset_id, target)
+    if result["status"] != "ok":
+        raise HTTPException(400, result["error"])
     return safe(result)
 
 # =====================================================
@@ -1964,7 +1765,7 @@ def train(dataset_id: str, payload: dict):
 # =====================================================
 @app.get("/api/meta/{dataset_id}")
 def meta(dataset_id: str):
-    p = os.path.join(MODELS, dataset_id, "metadata.json")
+    p = os.path.join(model_dir(dataset_id), "metadata.json")
     if not os.path.exists(p):
         raise HTTPException(404, "No model trained")
     return safe(json.load(open(p)))
@@ -1974,19 +1775,7 @@ def meta(dataset_id: str):
 # =====================================================
 @app.post("/api/predict/{dataset_id}")
 def predict(dataset_id: str, payload: dict):
-    model_path = os.path.join(MODELS, dataset_id, "model.pkl")
-    if not os.path.exists(model_path):
-        raise HTTPException(404, "Model not trained")
-
-    model = joblib.load(model_path)
-    X = pd.DataFrame([payload])
-    preds = model.predict(X)
-
-    conf = None
-    if hasattr(model.named_steps["model"], "predict_proba"):
-        conf = float(model.predict_proba(X)[0].max())
-
-    return safe({
-        "prediction": preds.tolist(),
-        "confidence": conf,
-    })
+    result = make_prediction(dataset_id, payload)
+    if result["status"] != "ok":
+        raise HTTPException(404, result["error"])
+    return safe(result)

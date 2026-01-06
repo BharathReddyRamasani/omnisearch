@@ -3,137 +3,108 @@ import json
 import joblib
 import pandas as pd
 import numpy as np
+import time
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.impute import SimpleImputer
-from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, GradientBoostingClassifier, GradientBoostingRegressor
 from sklearn.linear_model import LogisticRegression, LinearRegression
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import (accuracy_score, precision_score, recall_score, 
-                           confusion_matrix, mean_squared_error, mean_absolute_error, r2_score)
-from backend.services.utils import load_df, clean_dataframe, dataset_dir, validate_target, safe_json
-from backend.services.utils import load_df, clean_dataframe, dataset_dir, safe_json
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, r2_score
+from backend.services.utils import load_raw, model_dir
 
 
-def train_model_logic(dataset_id: str, target: str = "auto"):
-    try:
-        df = clean_dataframe(load_df(dataset_id))
-        
-        # AUTO-DETECT TARGET
-        if target == "auto":
-            numeric_cols = df.select_dtypes(include=['int64', 'float64']).columns
-            if len(numeric_cols) > 0:
-                target = numeric_cols[-1]  # Last numeric column
-            else:
-                return {"status": "failed", "error": "No suitable target column"}
-        
-        if target not in df.columns:
-            return {"status": "failed", "error": "Target column not found"}
-        
-        reason = validate_target(df[target])
-        if reason:
-            return {"status": "failed", "error": reason}
-        
-        df = df.dropna(subset=[target])
-        if df.shape[0] < 20:  # Reduced minimum
-            return {"status": "failed", "error": "Not enough data (<20 rows)"}
-        
-        X = df.drop(columns=[target])
-        y = df[target]
-        
-        # Drop useless columns
-        DROP_COLS = ['alley', 'poolqc', 'fence', 'miscfeature', 'fireplacequ', 'garageyrblt']
-        X = X.drop(columns=[c for c in DROP_COLS if c in X.columns], errors='ignore')
-        
-        num_cols = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
-        cat_cols = [c for c in X.select_dtypes(include=['object']).columns if X[c].nunique() < 20]
-        
-        features = num_cols + cat_cols
-        if not features:
-            return {"status": "failed", "error": "No usable features"}
-        
-        # FAST PREPROCESSOR
-        preprocessor = ColumnTransformer(
-            transformers=[
-                ('num', Pipeline([('imputer', SimpleImputer(strategy='median'))]), num_cols),
-                ('cat', Pipeline([
-                    ('imputer', SimpleImputer(strategy='most_frequent')),
-                    ('encoder', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
-                ]), cat_cols)
-            ]
-        )
-        
-        # Model selection (FAST)
-        if y.dtype == 'object' or y.nunique() <= 10:
-            task = "classification"
-            model = RandomForestClassifier(n_estimators=50, random_state=42)  # FAST
-            model_reason = "Random Forest (Classification)"
-        else:
-            task = "regression"
-            model = RandomForestRegressor(n_estimators=50, random_state=42)  # FAST
-            model_reason = "Random Forest (Regression)"
-        
-        pipeline = Pipeline([('prep', preprocessor), ('model', model)])
-        
-        # FAST TRAIN/TEST (no stratify for speed)
-        X_train, X_test, y_train, y_test = train_test_split(
-            X[features], y, test_size=0.2, random_state=42
-        )
-        
-        pipeline.fit(X_train, y_train)
-        preds = pipeline.predict(X_test)
-        
-        # Metrics (SIMPLE)
-        if task == "classification":
-            test_metrics = {
-                "accuracy": float(accuracy_score(y_test, preds))
-            }
-        else:
-            test_metrics = {
-                "r2": float(r2_score(y_test, preds))
-            }
-        
-        # FAST CV (3-fold instead of 5)
-        cv_scores = cross_val_score(pipeline, X[features], y, cv=3, n_jobs=-1)
-        
-        metrics = {
-            "test_metrics": test_metrics,
-            "cv_scores": cv_scores.tolist(),
-            "cv_mean": float(cv_scores.mean()),
-            "cv_std": float(cv_scores.std())
+def train_model_logic(dataset_id: str, target: str):
+    df = load_raw(dataset_id)
+    if target not in df.columns:
+        return {"status": "failed", "error": "Invalid target"}
+
+    X = df.drop(columns=[target])
+    y = df[target]
+    mask = ~y.isna()
+    X, y = X[mask], y[mask]
+
+    if len(X) < 20:
+        return {"status": "failed", "error": "Not enough valid rows"}
+
+    task = "classification" if y.nunique() <= 15 else "regression"
+
+    num = X.select_dtypes(include="number").columns.tolist()
+    cat = X.select_dtypes(include="object").columns.tolist()
+
+    pre = ColumnTransformer([
+        ("num", Pipeline([
+            ("imp", SimpleImputer(strategy="median")),
+            ("sc", StandardScaler())
+        ]), num),
+        ("cat", Pipeline([
+            ("imp", SimpleImputer(strategy="most_frequent")),
+            ("oh", OneHotEncoder(handle_unknown="ignore"))
+        ]), cat),
+    ])
+
+    if task == "classification":
+        models = {
+            "LogisticRegression": LogisticRegression(max_iter=1000),
+            "DecisionTree": DecisionTreeClassifier(),
+            "RandomForest": RandomForestClassifier(n_estimators=200),
+            "GradientBoosting": GradientBoostingClassifier(),
         }
-        
-        # Feature importance (SIMPLE)
-        model_step = pipeline.named_steps['model']
-        top_features = []
-        if hasattr(model_step, 'feature_importances_'):
-            importances = model_step.feature_importances_
-            ranked = sorted(zip(features, importances), key=lambda x: x[1], reverse=True)
-            top_features = [f.split('_')[0] for f, _ in ranked[:5]]
-        
-        # Save model
-        dpath = dataset_dir(dataset_id)
-        joblib.dump(pipeline, os.path.join(dpath, "model.pkl"))
-        
-        meta = {
-            "target": target,
-            "task": task,
-            "features": features,
-            "top_features": top_features,
-            "best_model": model.__class__.__name__,
-            "model_reason": model_reason,
-            "metrics": metrics
+        scorer = lambda yt, yp: accuracy_score(yt, yp)
+    else:
+        models = {
+            "LinearRegression": LinearRegression(),
+            "DecisionTree": DecisionTreeRegressor(),
+            "RandomForest": RandomForestRegressor(n_estimators=200),
+            "GradientBoosting": GradientBoostingRegressor(),
         }
-        
-        with open(os.path.join(dpath, "meta.json"), 'w') as f:
-            json.dump(meta, f, indent=2, default=safe_json)
-        
-        return {
-            "status": "ok",
-            "task": task,
-            "accuracy": metrics["cv_mean"],
-            "top_features": top_features[:3]
+        scorer = lambda yt, yp: r2_score(yt, yp)
+
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    leaderboard = []
+    best_score = -1e9
+    best_model = None
+    best_pipe = None
+
+    for name, model in models.items():
+        pipe = Pipeline([("pre", pre), ("model", model)])
+        pipe.fit(Xtr, ytr)
+        preds = pipe.predict(Xte)
+        score = scorer(yte, preds)
+
+        leaderboard.append({
+            "model": name,
+            "score": round(float(score), 4),
+            "train_rows": len(Xtr),
+            "test_rows": len(Xte)
+        })
+
+        if score > best_score:
+            best_score = score
+            best_model = name
+            best_pipe = pipe
+
+    root = model_dir(dataset_id)
+    joblib.dump(best_pipe, os.path.join(root, "model.pkl"))
+
+    result = {
+        "status": "ok",
+        "task": task,
+        "target": target,
+        "best_model": best_model,
+        "best_score": round(float(best_score), 4),
+        "leaderboard": leaderboard,
+        "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "explanation": {
+            "why_best": f"{best_model} achieved the highest validation score.",
+            "why_not_others": "Other models underperformed on the same dataset and split."
         }
-    except Exception as e:
-        return {"status": "failed", "error": str(e)}
+    }
+
+    with open(os.path.join(root, "metadata.json"), "w") as f:
+        json.dump(result, f, indent=2)
+
+    return result

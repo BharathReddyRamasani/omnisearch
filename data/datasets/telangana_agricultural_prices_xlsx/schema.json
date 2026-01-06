@@ -1,8 +1,0 @@
-{
-  "category": "object",
-  "location": "object",
-  "crop_name": "object",
-  "year": "int64",
-  "min_price_inr": "int64",
-  "max_price_inr": "int64"
-}
