@@ -1661,6 +1661,8 @@ from backend.services.cleaning import full_etl
 from backend.services.training import train_model_logic
 from backend.services.predict import make_prediction
 from backend.services.utils import safe, raw_path, datasetdir, model_dir
+import os
+os.environ["LOKY_MAX_CPU_COUNT"] = "4"  # or your CPU logical cores
 
 # =====================================================
 # APP

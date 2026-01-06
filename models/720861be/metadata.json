@@ -1,0 +1,58 @@
+{
+  "status": "ok",
+  "task": "regression",
+  "target": "saleprice",
+  "best_model": "GradientBoosting",
+  "best_score": 0.9092,
+  "leaderboard": [
+    {
+      "model": "LinearRegression",
+      "score": 0.8867
+    },
+    {
+      "model": "DecisionTree",
+      "score": 0.7478
+    },
+    {
+      "model": "RandomForest",
+      "score": 0.8902
+    },
+    {
+      "model": "GradientBoosting",
+      "score": 0.9092
+    }
+  ],
+  "feature_importance": {
+    "overallqual": 0.51304,
+    "grlivarea": 0.140553,
+    "garagecars": 0.044101,
+    "totalbsmtsf": 0.042749,
+    "bsmtfinsf1": 0.030058,
+    "2ndflrsf": 0.029122,
+    "1stflrsf": 0.027039,
+    "lotarea": 0.018583,
+    "garagefinish_Unf": 0.016674,
+    "bsmtqual_Ex": 0.014884,
+    "yearbuilt": 0.014476,
+    "fireplaces": 0.010915,
+    "kitchenqual_Ex": 0.008119,
+    "yearremodadd": 0.008108,
+    "fullbath": 0.007012,
+    "overallcond": 0.006809,
+    "landcontour_Bnk": 0.005505,
+    "garageyrblt": 0.005394,
+    "garagearea": 0.004646,
+    "kitchenqual_TA": 0.00326,
+    "neighborhood_Edwards": 0.003243,
+    "centralair_N": 0.003069,
+    "condition1_Norm": 0.002985,
+    "screenporch": 0.002962,
+    "openporchsf": 0.002486,
+    "saletype_New": 0.002473,
+    "kitchenqual_Gd": 0.002357,
+    "bsmtqual_Gd": 0.001866,
+    "mszoning_RM": 0.001797,
+    "neighborhood_Crawfor": 0.001484
+  },
+  "trained_at": "2026-01-06 17:26:31"
+}
