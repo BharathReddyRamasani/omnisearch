@@ -1646,13 +1646,15 @@
 #         "confidence": conf,
 #         "model_version": latest,
 #     })
+# MUST BE AT THE VERY TOP before any sklearn/joblib/numpy heavy import
+import os
+os.environ["LOKY_MAX_CPU_COUNT"] = "4"  # Adjust based on your machine logical cores (usually 2-8)
 
-# backend/app.py
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-import os, json
+import json
 import pandas as pd
 
 from backend.services.ingest import process_upload
@@ -1661,8 +1663,6 @@ from backend.services.cleaning import full_etl
 from backend.services.training import train_model_logic
 from backend.services.predict import make_prediction
 from backend.services.utils import safe, raw_path, datasetdir, model_dir
-import os
-os.environ["LOKY_MAX_CPU_COUNT"] = "4"  # or your CPU logical cores
 
 # =====================================================
 # APP
@@ -1675,18 +1675,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# =====================================================
-# DIRECTORIES
-# =====================================================
-BASE = os.getcwd()
-DATA = os.path.join(BASE, "data")
-DATASETS = os.path.join(DATA, "datasets")
-MODELS = os.path.join(BASE, "models")
-
-os.makedirs(DATA, exist_ok=True)
-os.makedirs(DATASETS, exist_ok=True)
-os.makedirs(MODELS, exist_ok=True)
 
 # =====================================================
 # UPLOAD
@@ -1711,11 +1699,10 @@ async def upload(file: UploadFile = File(...)):
 # =====================================================
 @app.get("/api/eda/{dataset_id}")
 def eda(dataset_id: str):
-    result = generate_eda(dataset_id)
-    return safe(result)
+    return safe(generate_eda(dataset_id))
 
 # =====================================================
-# ETL
+# ETL / CLEAN
 # =====================================================
 @app.post("/api/datasets/{dataset_id}/clean")
 def run_etl(dataset_id: str):
@@ -1734,28 +1721,31 @@ def download(dataset_id: str, kind: str):
     elif kind == "clean":
         p = os.path.join(datasetdir(dataset_id), "clean.csv")
     else:
-        raise HTTPException(400, "Invalid type")
+        raise HTTPException(400, "Invalid download type: raw or clean only")
 
     if not os.path.exists(p):
-        raise HTTPException(404, "File not found")
+        raise HTTPException(404, f"{kind.capitalize()} file not found")
 
-    return FileResponse(p, filename=os.path.basename(p))
+    return FileResponse(p, filename=f"{dataset_id}_{kind}.csv")
 
+# =====================================================
+# COMPARISON (RAW vs CLEAN)
+# =====================================================
 @app.get("/api/datasets/{dataset_id}/comparison")
 def comparison(dataset_id: str):
     p = os.path.join(datasetdir(dataset_id), "comparison.json")
     if not os.path.exists(p):
-        raise HTTPException(404, "Run ETL first")
+        raise HTTPException(404, "Run ETL/cleaning first")
     return safe(json.load(open(p)))
 
 # =====================================================
-# TRAIN — ENTERPRISE AUTOML
+# TRAIN
 # =====================================================
 @app.post("/api/train/{dataset_id}")
 def train(dataset_id: str, payload: dict):
     target = payload.get("target")
     if not target:
-        raise HTTPException(400, "Target required")
+        raise HTTPException(400, "Target column name required in payload")
 
     result = train_model_logic(dataset_id, target)
     if result["status"] != "ok":
@@ -1769,7 +1759,7 @@ def train(dataset_id: str, payload: dict):
 def meta(dataset_id: str):
     p = os.path.join(model_dir(dataset_id), "metadata.json")
     if not os.path.exists(p):
-        raise HTTPException(404, "No model trained")
+        raise HTTPException(404, "No model trained yet for this dataset")
     return safe(json.load(open(p)))
 
 # =====================================================
@@ -1779,5 +1769,5 @@ def meta(dataset_id: str):
 def predict(dataset_id: str, payload: dict):
     result = make_prediction(dataset_id, payload)
     if result["status"] != "ok":
-        raise HTTPException(404, result["error"])
+        raise HTTPException(status_code=400, detail=result.get("error", "Prediction failed"))
     return safe(result)

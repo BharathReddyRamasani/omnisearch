@@ -211,12 +211,6 @@
 #         mime="text/csv",
 #     )
 
-
-
-
-
-
-
 import streamlit as st
 import requests
 import pandas as pd
@@ -236,6 +230,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# =====================================================
+# SESSION STATE INITIALIZATION (CRITICAL - MUST BE FIRST)
+# =====================================================
+for key in ["eda", "etl", "model_meta"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
 # =====================================================
 # DATASET CHECK
@@ -275,40 +276,70 @@ with st.sidebar:
 # =====================================================
 # BACKEND FETCHERS
 # =====================================================
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def fetch_eda(ds):
-    r = requests.get(f"{API}/eda/{ds}", timeout=60)
+    r = requests.get(f"{API}/eda/{ds}", timeout=180)
     r.raise_for_status()
     return r.json()["eda"]
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def fetch_etl(ds):
-    r = requests.get(f"{API}/datasets/{ds}/comparison", timeout=30)
+    r = requests.get(f"{API}/datasets/{ds}/comparison", timeout=60)
     return r.json() if r.status_code == 200 else None
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def fetch_model_meta(ds):
-    r = requests.get(f"{API}/meta/{ds}", timeout=10)
+    r = requests.get(f"{API}/meta/{ds}", timeout=20)
     return r.json() if r.status_code == 200 else None
 
-@st.cache_data(ttl=60)
-def load_raw_sample(ds, cols=None, n=50000):
-    r = requests.get(f"{API}/datasets/{ds}/download/raw", timeout=60)
-    df = pd.read_csv(StringIO(r.text), usecols=cols)
-    return df.sample(min(len(df), n), random_state=42)
+# =====================================================
+# SAFE SAMPLE LOADER — CLEAN-AWARE, CASE-INSENSITIVE
+# =====================================================
+@st.cache_data(ttl=300)
+def load_sample(ds, cols=None, n=20000):
+    # Use cached eda to determine source
+    eda_data = fetch_eda(ds)
+    source = "clean" if eda_data.get("etl_complete", False) else "raw"
+
+    r = requests.get(f"{API}/datasets/{ds}/download/{source}", timeout=120)
+    r.raise_for_status()
+
+    df = pd.read_csv(StringIO(r.text))
+    df.columns = [c.lower() for c in df.columns]  # Normalize once
+
+    if cols:
+        lowered_cols = [c.lower() for c in cols]
+        available = [c for c in lowered_cols if c in df.columns]
+        if not available:
+            return pd.DataFrame()  # Empty if nothing matches
+        df = df[available]
+
+    if len(df) > n:
+        df = df.sample(n, random_state=42)
+
+    return df
 
 # =====================================================
-# LOAD DATA
+# LOAD / REFRESH EDA DATA
 # =====================================================
-if run_eda or "eda" not in st.session_state:
+if run_eda or st.session_state.eda is None:
     with st.spinner("🔬 Running Enterprise EDA…"):
-        st.session_state.eda = fetch_eda(dataset_id)
-        st.session_state.etl = fetch_etl(dataset_id)
-        st.session_state.model_meta = fetch_model_meta(dataset_id)
+        try:
+            st.session_state.eda = fetch_eda(dataset_id)
+            st.session_state.etl = fetch_etl(dataset_id)
+            st.session_state.model_meta = fetch_model_meta(dataset_id)
+        except Exception as e:
+            st.error(f"Failed to fetch EDA data: {str(e)}")
+            if st.session_state.eda is None:
+                st.stop()
 
 eda = st.session_state.eda
 etl = st.session_state.etl
 model_meta = st.session_state.model_meta
+
+if eda is None:
+    st.warning("EDA data not available. Click 'Run / Refresh EDA' to load.")
+    st.stop()
 
 # =====================================================
 # EXECUTIVE KPI DASHBOARD
@@ -343,7 +374,18 @@ if etl:
     )
     st.dataframe(cmp, use_container_width=True)
 else:
-    st.info("ETL not run yet.")
+    st.info("ℹ️ ETL not run yet — run cleaning to see improvements.")
+
+# =====================================================
+# MODEL INSIGHTS (SAFE)
+# =====================================================
+if model_meta and model_meta.get("status") == "ok":
+    st.markdown("## 🎯 Model-Driven Insights")
+    st.write(f"**Best Model:** {model_meta['best_model']} ({model_meta['best_score']:.3f})")
+    if "top_features" in model_meta:
+        st.write("**Top Impact Features:**", ", ".join(model_meta["top_features"]))
+else:
+    st.info("ℹ️ Train a model to unlock feature importance and prediction insights.")
 
 # =====================================================
 # QUALITY GAUGE
@@ -391,20 +433,25 @@ st.markdown("## 📦 Outlier Analysis (Boxplots)")
 
 num_features = [
     f for f, v in eda["summary"].items()
-    if isinstance(v.get("mean"), (int, float))
+    if v is not None and isinstance(v.get("mean"), (int, float))
 ]
 
 if num_features:
     feature = st.selectbox("Select numeric feature", num_features)
-    df_box = load_raw_sample(dataset_id, [feature])
+    df_box = load_sample(dataset_id, [feature.lower()])
 
-    fig = px.box(
-        df_box,
-        y=feature,
-        points="outliers",
-        title=f"Boxplot – {feature}",
-    )
-    st.plotly_chart(fig, use_container_width=True)
+    if df_box.empty or feature.lower() not in df_box.columns:
+        st.warning(f"Feature '{feature}' not available in current data source.")
+    else:
+        fig = px.box(
+            df_box,
+            y=feature.lower(),
+            points="outliers",
+            title=f"Boxplot – {feature}",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("No numeric features detected for boxplot analysis.")
 
 # =====================================================
 # CLUSTERING (UNSUPERVISED)
@@ -412,36 +459,45 @@ if num_features:
 st.markdown("## 🧠 Unsupervised Clustering (Outliers + Structure)")
 
 if len(num_features) >= 2:
-    x_col, y_col = st.multiselect(
+    selected = st.multiselect(
         "Select 2 features for clustering",
         num_features,
         default=num_features[:2],
         max_selections=2,
     )
 
-    if len([x_col, y_col]) == 2:
-        df_cluster = load_raw_sample(dataset_id, [x_col, y_col])
-        X = StandardScaler().fit_transform(df_cluster)
+    if len(selected) == 2:
+        x_col, y_col = selected[0].lower(), selected[1].lower()
+        df_cluster = load_sample(dataset_id, [selected[0].lower(), selected[1].lower()])
 
-        algo = st.radio("Clustering Algorithm", ["KMeans", "DBSCAN"])
-
-        if algo == "KMeans":
-            k = st.slider("Clusters (k)", 2, 8, 3)
-            labels = KMeans(n_clusters=k, random_state=42).fit_predict(X)
+        if df_cluster.empty or len(df_cluster.columns) < 2:
+            st.warning("Selected features not available in data.")
         else:
-            labels = DBSCAN(eps=0.8, min_samples=10).fit_predict(X)
+            X = StandardScaler().fit_transform(df_cluster[[x_col, y_col]])
 
-        df_cluster["cluster"] = labels
+            algo = st.radio("Clustering Algorithm", ["KMeans", "DBSCAN"], horizontal=True)
 
-        fig = px.scatter(
-            df_cluster,
-            x=x_col,
-            y=y_col,
-            color="cluster",
-            title=f"{algo} Clustering ({x_col} vs {y_col})",
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            if algo == "KMeans":
+                k = st.slider("Clusters (k)", 2, 8, 3)
+                labels = KMeans(n_clusters=k, random_state=42).fit_predict(X)
+            else:
+                eps = st.slider("EPS", 0.1, 2.0, 0.8, 0.1)
+                min_samples = st.slider("Min Samples", 5, 50, 10)
+                labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(X)
 
+            df_cluster["cluster"] = labels
+
+            fig = px.scatter(
+                df_cluster,
+                x=x_col,
+                y=y_col,
+                color="cluster",
+                title=f"{algo} Clustering ({selected[0]} vs {selected[1]})",
+                color_continuous_scale="Viridis" if algo == "DBSCAN" else None,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Need at least 2 numeric features for clustering.")
 
 # =====================================================
 # EXECUTIVE EXPORTS
@@ -452,16 +508,20 @@ timestamp = datetime.now().strftime("%Y%m%d_%H%M")
 json_report = json.dumps(
     {
         "eda": eda,
-        "etl": etl,
-        "model": model_meta,
+        "etl": etl or "Not run",
+        "model": model_meta or "Not trained",
+        "generated_at": datetime.now().isoformat(),
     },
     indent=2,
+    default=str,
 )
 
 if export_html:
     html = f"""
-    <h1>Enterprise EDA Report</h1>
+    <!DOCTYPE html>
+    <html><body><h1>Enterprise EDA Report – {dataset_id}</h1>
     <pre>{json_report}</pre>
+    </body></html>
     """
     st.download_button(
         "Download HTML Report",
@@ -471,19 +531,19 @@ if export_html:
     )
 
 if export_pdf:
-    st.info("PDF generated from HTML (wkhtmltopdf recommended in prod).")
+    st.info("PDF export requires server-side rendering (e.g., WeasyPrint). Source provided.")
     st.download_button(
-        "Download PDF Source",
+        "Download JSON (for PDF conversion)",
         json_report,
-        f"EDA_Report_{dataset_id}_{timestamp}.pdf",
-        "application/pdf",
+        f"EDA_Report_{dataset_id}_{timestamp}.json",
+        "application/json",
     )
 
 st.download_button(
-    "Download JSON",
+    "Download Full JSON Report",
     json_report,
-    f"EDA_Report_{dataset_id}.json",
+    f"EDA_Report_{dataset_id}_{timestamp}.json",
     "application/json",
 )
 
-st.caption("Enterprise EDA • Unsupervised Intelligence • Audit-Ready")
+st.caption("Enterprise EDA • Unsupervised Intelligence • Audit-Ready • Null-Safe")

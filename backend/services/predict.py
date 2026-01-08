@@ -341,21 +341,36 @@
 #         ],
 #     }
 
-
 import os
 import joblib
 import pandas as pd
 import numpy as np
+import hashlib
 from fastapi import HTTPException
-from backend.services.utils import model_dir, load_meta
+
+from backend.services.utils import model_dir, load_meta, load_raw, load_clean
 
 
+# =====================================================
+# DATASET HASH (MUST MATCH training.py)
+# =====================================================
+def dataset_hash(df: pd.DataFrame) -> str:
+    df_sorted = df[sorted(df.columns)]
+    return hashlib.md5(pd.util.hash_pandas_object(df_sorted, index=True).values).hexdigest()
+
+
+# =====================================================
+# AUTOFILL HELPER
+# =====================================================
 def _autofill(col, user_value, defaults):
     if user_value not in (None, "", " "):
         return user_value
-    return defaults.get(col, 0.0 if isinstance(defaults.get(col), (int, float)) else "UNKNOWN")
+    return defaults.get(col, 0.0 if pd.api.types.is_numeric_dtype(type(defaults.get(col))) else "UNKNOWN")
 
 
+# =====================================================
+# MAIN PREDICTION LOGIC
+# =====================================================
 def make_prediction(dataset_id: str, payload: dict):
     model_path = os.path.join(model_dir(dataset_id), "model.pkl")
     if not os.path.exists(model_path):
@@ -364,11 +379,44 @@ def make_prediction(dataset_id: str, payload: dict):
     model = joblib.load(model_path)
     meta = load_meta(dataset_id)
 
-    raw_columns = meta["raw_columns"]
-    defaults = meta["feature_defaults"]
+    # -------------------------------------------------
+    # VALIDATE DATASET CONSISTENCY (ENTERPRISE SAFETY)
+    # -------------------------------------------------
+    data_source = meta.get("data_source", "raw")  # backward compat if old meta
 
-    mode = payload.pop("_mode", "full")
-    used_features = meta["top_features"] if mode == "top" else raw_columns
+    try:
+        if data_source == "clean":
+            df_current = load_clean(dataset_id)
+        else:
+            df_current = load_raw(dataset_id)
+    except Exception:
+        # Fallback to raw if clean fails — but still hash what's available
+        df_current = load_raw(dataset_id)
+
+    current_hash = dataset_hash(df_current)
+
+    if current_hash != meta["dataset_hash"]:
+        raise HTTPException(
+            status_code=409,
+            detail="Dataset has changed since model training. Retrain required."
+        )
+
+    # -------------------------------------------------
+    # FEATURE HANDLING
+    # -------------------------------------------------
+    raw_columns = [
+    c for c in meta["raw_columns"]
+    if c not in meta.get("id_columns", [])  
+]
+
+    defaults = meta["feature_defaults"]
+    top_features = meta.get("top_features", raw_columns[:8])  # safety
+
+    # Rename mode: "top" → "guided", "full" → "full"
+    internal_mode = payload.pop("_mode", "full")
+    mode_label = "guided" if internal_mode == "top" else "full"
+
+    used_features = top_features if internal_mode == "top" else raw_columns
 
     row = {}
     auto_filled = []
@@ -377,25 +425,33 @@ def make_prediction(dataset_id: str, payload: dict):
         val = payload.get(col)
         final = _autofill(col, val, defaults)
         row[col] = final
-        if col not in payload:
+        if payload.get(col) in (None, "", " "):  # only if truly missing/empty
             auto_filled.append(col)
 
     X = pd.DataFrame([row])
 
+    # -------------------------------------------------
+    # PREDICTION
+    # -------------------------------------------------
     try:
         pred = model.predict(X)[0]
     except Exception as e:
         raise HTTPException(400, f"Prediction failed: {str(e)}")
 
     confidence = None
-    if hasattr(model.named_steps["model"], "predict_proba"):
-        confidence = float(np.max(model.predict_proba(X)))
+    model_step = model.named_steps.get("model")
+    if hasattr(model_step, "predict_proba"):
+        probs = model.predict_proba(X)[0]
+        confidence = float(np.max(probs))
 
+    # -------------------------------------------------
+    # RESPONSE (TRANSPARENT)
+    # -------------------------------------------------
     return {
         "status": "ok",
         "prediction": pred,
         "confidence": confidence,
-        "mode": mode,
+        "mode": mode_label,           # ← external: "guided" or "full"
         "used_features": used_features,
         "auto_filled": auto_filled,
     }

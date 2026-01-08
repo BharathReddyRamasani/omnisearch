@@ -283,11 +283,7 @@
 
 #     return result
 
-
-
-
-
-import os, json, time, joblib
+import os, json, time, joblib, hashlib
 import numpy as np
 import pandas as pd
 
@@ -306,7 +302,43 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, r2_score
 
-from backend.services.utils import load_raw, model_dir
+from backend.services.utils import load_raw, load_clean, model_dir
+
+
+# =====================================================
+# DATASET HASH
+# =====================================================
+def dataset_hash(df: pd.DataFrame) -> str:
+    df_sorted = df[sorted(df.columns)]
+    return hashlib.md5(pd.util.hash_pandas_object(df_sorted, index=True).values).hexdigest()
+
+
+# =====================================================
+# ID COLUMN DETECTION (INDUSTRIAL GRADE)
+# =====================================================
+def detect_id_columns(df: pd.DataFrame, uniqueness_threshold: float = 0.95, min_rows: int = 100) -> list[str]:
+    if len(df) == 0:
+        return []
+    
+    n_rows = len(df)
+    threshold = max(uniqueness_threshold, 0.99 if n_rows < min_rows else uniqueness_threshold)
+    
+    id_candidates = []
+    suspicious_names = {"id", "uuid", "key", "code", "guid", "sk", "pk"}
+    
+    for col in df.columns:
+        col_lower = col.lower()
+        
+        if col_lower in {"id", "uuid", "guid"} or col_lower.endswith("_id") or col_lower.endswith("_uuid"):
+            id_candidates.append(col)
+            continue
+        
+        if any(pattern in col_lower for pattern in suspicious_names):
+            uniqueness = df[col].nunique() / n_rows
+            if uniqueness >= threshold:
+                id_candidates.append(col)
+    
+    return id_candidates
 
 
 # =====================================================
@@ -318,49 +350,80 @@ def extract_defaults(X: pd.DataFrame):
         if pd.api.types.is_numeric_dtype(X[c]):
             defaults[c] = float(X[c].median())
         else:
-            defaults[c] = X[c].mode().iloc[0]
+            defaults[c] = X[c].mode().iloc[0] if not X[c].mode().empty else "UNKNOWN"
     return defaults
 
 
 # =====================================================
-# TOP FEATURE EXTRACTION (RAW LEVEL)
+# TOP FEATURE EXTRACTION
 # =====================================================
 def extract_top_features(pipe, raw_columns, k=8):
     model = pipe.named_steps["model"]
-
+    pre = pipe.named_steps["pre"]
+    
     if not hasattr(model, "feature_importances_"):
         return raw_columns[:k]
-
-    scores = model.feature_importances_
-    ranked = sorted(
-        zip(raw_columns, scores[:len(raw_columns)]),
-        key=lambda x: x[1],
-        reverse=True
+    
+    importances = model.feature_importances_
+    feature_names = []
+    
+    for name, transformer, cols in pre.transformers_:
+        if name == "num":
+            feature_names.extend(cols)
+        elif name == "cat":
+            ohe = transformer.named_steps["oh"]
+            feature_names.extend(ohe.get_feature_names_out(cols))
+    
+    df_imp = pd.DataFrame({
+        "feature": feature_names,
+        "importance": importances
+    })
+    
+    df_imp["raw_feature"] = df_imp["feature"].apply(lambda x: x.split("_")[0] if "_" in x else x)
+    
+    ranked = (
+        df_imp.groupby("raw_feature")["importance"]
+        .sum()
+        .sort_values(ascending=False)
     )
-    return [f for f, _ in ranked[:k]]
+    
+    return ranked.head(k).index.tolist()
 
 
 # =====================================================
 # MAIN TRAIN FUNCTION
 # =====================================================
 def train_model_logic(dataset_id: str, target: str):
-    df = load_raw(dataset_id)
+    try:
+        df = load_clean(dataset_id)
+        data_source = "clean"
+    except Exception:
+        df = load_raw(dataset_id)
+        data_source = "raw"
 
     if target not in df.columns:
         return {"status": "failed", "error": "Invalid target"}
 
-    X = df.drop(columns=[target])
+    # Detect ID columns BEFORE dropping target
+    id_columns = detect_id_columns(df)
+
+    # Drop target and IDs for modeling
+    drop_cols = [target] + id_columns
+    invalid_drops = [c for c in drop_cols if c not in df.columns]
+    if invalid_drops:
+        # Safety: only drop what exists
+        drop_cols = [c for c in drop_cols if c in df.columns]
+
+    X = df.drop(columns=drop_cols)
     y = df[target]
 
     mask = ~y.isna()
     X, y = X[mask], y[mask]
+    df_filtered = df[mask]  # For hashing — includes target + IDs
 
     if len(X) < 20:
         return {"status": "failed", "error": "Insufficient data"}
 
-    # -------------------------------------------------
-    # TASK DETECTION
-    # -------------------------------------------------
     task = "classification" if y.nunique() <= 15 else "regression"
 
     num = X.select_dtypes(include="number").columns.tolist()
@@ -373,43 +436,35 @@ def train_model_logic(dataset_id: str, target: str):
         ]), num),
         ("cat", Pipeline([
             ("imp", SimpleImputer(strategy="most_frequent")),
-            ("oh", OneHotEncoder(handle_unknown="ignore"))
+            ("oh", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
         ]), cat),
     ])
 
-    # -------------------------------------------------
-    # MODEL ZOO (ENTERPRISE STANDARD)
-    # -------------------------------------------------
     models = (
         {
             "LogisticRegression": LogisticRegression(max_iter=1000),
             "DecisionTree": DecisionTreeClassifier(),
-            "RandomForest": RandomForestClassifier(n_estimators=200, random_state=42),
+            "RandomForest": RandomForestClassifier(n_estimators=100,max_depth=10, random_state=42),
             "GradientBoosting": GradientBoostingClassifier(),
         }
         if task == "classification"
         else {
             "LinearRegression": LinearRegression(),
             "DecisionTree": DecisionTreeRegressor(),
-            "RandomForest": RandomForestRegressor(n_estimators=200, random_state=42),
+            "RandomForest": RandomForestRegressor(n_estimators=100,max_depth=10, random_state=42),
             "GradientBoosting": GradientBoostingRegressor(),
         }
     )
 
     scorer = accuracy_score if task == "classification" else r2_score
 
-    Xtr, Xte, ytr, yte = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42)
 
     leaderboard = []
     best_pipe = None
     best_score = -1e9
     best_model_name = None
 
-    # -------------------------------------------------
-    # TRAIN ALL MODELS
-    # -------------------------------------------------
     for name, model in models.items():
         pipe = Pipeline([
             ("pre", pre),
@@ -432,27 +487,28 @@ def train_model_logic(dataset_id: str, target: str):
             best_pipe = pipe
             best_model_name = name
 
-    # -------------------------------------------------
-    # SAVE BEST MODEL
-    # -------------------------------------------------
     root = model_dir(dataset_id)
     joblib.dump(best_pipe, os.path.join(root, "model.pkl"))
 
+    # Top features based on final modeling columns
     top_features = extract_top_features(best_pipe, list(X.columns))
 
-    # -------------------------------------------------
-    # METADATA (STABLE CONTRACT)
-    # -------------------------------------------------
     result = {
         "status": "ok",
+        "schema_version": "1.0",
+        "model_version": "v1",
+        "dataset_id": dataset_id,
+        "dataset_hash": dataset_hash(df_filtered),
         "task": task,
         "target": target,
         "best_model": best_model_name,
         "best_score": round(float(best_score), 4),
-        "leaderboard": leaderboard,                # ✅ multi-model
-        "raw_columns": list(X.columns),
+        "leaderboard": leaderboard,
+        "raw_columns": list(X.columns),           # Features actually used in model
+        "dropped_id_columns": id_columns,         # ← NEW: audit trail
         "feature_defaults": extract_defaults(X),
         "top_features": top_features,
+        "data_source": data_source,
         "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
 

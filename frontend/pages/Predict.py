@@ -209,7 +209,6 @@
 #         else:
 #             st.success("No auto-filled fields.")
 
-
 import streamlit as st
 import requests
 
@@ -217,58 +216,105 @@ API = "http://127.0.0.1:8000/api"
 
 st.set_page_config(page_title="OmniSearch AI – Predict", layout="wide")
 
-dataset_id = st.session_state.get("dataset_id")
-model_meta = st.session_state.get("model_meta")
+# =====================================================
+# SESSION STATE INITIALIZATION (MANDATORY - SAME AS EDA.PY)
+# =====================================================
+for key in ["dataset_id", "model_meta"]:
+    if key not in st.session_state:
+        st.session_state[key] = None
 
-if not dataset_id or not model_meta:
-    st.error("🚫 Train a model before prediction.")
+# =====================================================
+# EARLY SAFETY CHECK
+# =====================================================
+if st.session_state.dataset_id is None:
+    st.error("🚫 No dataset loaded. Upload a dataset first.")
     st.stop()
 
-st.markdown("## 🎯 Enterprise Prediction Engine")
+if st.session_state.model_meta is None:
+    st.error("🚫 No trained model found. Train a model before prediction.")
+    st.stop()
 
+dataset_id = st.session_state.dataset_id
+model_meta = st.session_state.model_meta
+
+# =====================================================
+# HEADER
+# =====================================================
+st.markdown("# 🎯 Enterprise Prediction Engine")
+st.markdown(f"**Dataset:** {dataset_id} | **Model:** {model_meta['best_model']} (Score: {model_meta['best_score']:.3f})")
+
+# =====================================================
+# MODE SELECTION (HONEST LABELING)
+# =====================================================
 mode = st.radio(
     "Prediction Mode",
-    ["Smart Mode (Top Impact Features)", "Full Mode (All Features)"],
+    ["Guided Mode (Top Impact Inputs)", "Full Mode (All Features)"],
     horizontal=True,
+    help="Guided: Only high-impact features shown, others auto-filled with smart defaults.\nFull: All features required.",
 )
 
-use_top = "Smart" in mode
+use_top = "Guided" in mode
 features = model_meta["top_features"] if use_top else model_meta["raw_columns"]
 defaults = model_meta["feature_defaults"]
 
+# =====================================================
+# INPUT FORM
+# =====================================================
+st.markdown("### 📝 Input Features")
+
 payload = {}
-st.markdown("### Input Features")
+payload["_mode"] = "top" if use_top else "full"
 
 cols = st.columns(3)
 for i, f in enumerate(features):
     with cols[i % 3]:
+        default_val = defaults.get(f, "")
+        # Convert to string safely
+        display_default = str(default_val) if default_val is not None else ""
         payload[f] = st.text_input(
             label=f,
-            value=str(defaults.get(f, "")),
+            value=display_default,
+            key=f"input_{f}",  # Unique key to prevent conflicts
         )
 
-payload["_mode"] = "top" if use_top else "full"
-
-if st.button("🚀 Predict", type="primary"):
-    with st.spinner("Scoring model…"):
-        r = requests.post(f"{API}/predict/{dataset_id}", json=payload)
-        res = r.json()
+# =====================================================
+# PREDICTION
+# =====================================================
+if st.button("🚀 Predict", type="primary", use_container_width=True):
+    with st.spinner("Scoring with enterprise model…"):
+        try:
+            r = requests.post(f"{API}/predict/{dataset_id}", json=payload, timeout=30)
+            r.raise_for_status()
+            res = r.json()
+        except requests.exceptions.RequestException as e:
+            st.error(f"API Error: {str(e)}")
+            st.stop()
+        except ValueError:
+            st.error("Invalid response from server.")
+            st.stop()
 
     if res.get("status") != "ok":
-        st.error(res.get("error", "Prediction failed"))
+        st.error(res.get("detail", res.get("error", "Prediction failed")))
         st.stop()
 
-    st.success("Prediction successful")
+    st.success("✅ Prediction Successful")
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("Prediction", res["prediction"])
+    c1.metric("**Prediction**", res["prediction"])
     if res.get("confidence") is not None:
-        c2.metric("Confidence", f"{res['confidence']*100:.1f}%")
-    c3.metric("Mode", res["mode"].upper())
+        c2.metric("**Confidence**", f"{res['confidence']*100:.1f}%")
+    c3.metric("**Mode Used**", res["mode"].upper())
 
-    with st.expander("🔍 Transparency"):
-        st.write("**Used Features:**", res["used_features"])
-        if res["auto_filled"]:
-            st.warning("Auto-filled: " + ", ".join(res["auto_filled"]))
+    with st.expander("🔍 Transparency & Audit Trail"):
+        st.write("**Used Features:**", ", ".join(res["used_features"]))
+        auto_filled = res.get("auto_filled", [])
+        if auto_filled:
+            st.warning(f"Auto-filled with defaults: {', '.join(auto_filled)}")
         else:
-            st.success("No auto-filled fields")
+            st.success("All features provided by user — no auto-fill")
+
+    # Optional: show dataset source
+    if "data_source" in model_meta:
+        st.info(f"Model trained on: **{model_meta['data_source'].upper()}** data")
+
+st.caption("Enterprise-Grade • Drift-Protected • Transparent • Audit-Ready")
