@@ -1,13 +1,17 @@
 # Python
-venv/
-frontend/venv/
+.venv/
 __pycache__/
 *.pyc
-*.pyd
-*.dll
 
-# Node
-node_modules/
+# ML artifacts
+models/
+data/
+*.pkl
+*.joblib
 
-# Env
-.env
+# Streamlit
+.streamlit/
+
+# OS
+Thumbs.db
+.DS_Store
