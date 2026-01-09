@@ -23,3 +23,14 @@ models/
 *.joblib
 .venv/
 __pycache__/
+
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pkl
+*.joblib
+*.csv
+.streamlit/
+Thumbs.db
+.DS_Store
