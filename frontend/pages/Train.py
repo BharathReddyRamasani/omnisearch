@@ -1,499 +1,18 @@
-# # # import streamlit as st
-# # # import requests
-# # # import pandas as pd
-# # # import plotly.express as px
-# # # import json
-
-# # # API = "http://127.0.0.1:8000/api"
-
-# # # st.set_page_config(
-# # #     page_title="OmniSearch AI - AutoML Training",
-# # #     layout="wide"
-# # # )
-
-# # # # ---------------- DATASET CHECK ----------------
-# # # if "dataset_id" not in st.session_state or not st.session_state.dataset_id:
-# # #     st.error("🚫 No dataset loaded. Go to **Upload** page first.")
-# # #     st.stop()
-
-# # # dataset_id = st.session_state.dataset_id
-
-# # # # ---------------- HEADER ----------------
-# # # st.markdown(
-# # #     """
-# # # <div style='background: linear-gradient(135deg, #2c5aa0 0%, #1e3c72 100%);
-# # #             padding: 2.5rem; border-radius: 18px; color: white;
-# # #             text-align: center; box-shadow: 0 8px 32px rgba(0,0,0,0.3);'>
-# # #     <h1 style='font-size: 3.2rem; margin:0;'>🤖 <b>AutoML Training Arena</b></h1>
-# # #     <p style='font-size: 1.3rem; margin-top:8px; opacity:0.95;'>
-# # #         RF vs XGBoost vs LightGBM • Best Model Auto-Selected
-# # #     </p>
-# # # </div>
-# # # """,
-# # #     unsafe_allow_html=True
-# # # )
-
-# # # # ---------------- FETCH MODEL STATUS ----------------
-# # # @st.cache_data(ttl=30)
-# # # def get_model_meta():
-# # #     try:
-# # #         r = requests.get(f"{API}/meta/{dataset_id}", timeout=10)
-# # #         return r.json() if r.status_code == 200 else None
-# # #     except:
-# # #         return None
-
-# # # model_meta = get_model_meta()
-
-# # # # ---------------- TARGET SELECTION ----------------
-# # # st.markdown("### 🎯 Target Column")
-
-# # # target_col = st.text_input(
-# # #     "Enter target column (leave empty for automatic selection)",
-# # #     help="If empty, backend selects the best numeric target automatically"
-# # # )
-
-# # # # ---------------- TRAIN BUTTON ----------------
-# # # col1, col2 = st.columns([3, 1])
-
-# # # with col1:
-# # #     if st.button(
-# # #         "🚀 Start Model Battle",
-# # #         type="primary",
-# # #         use_container_width=True
-# # #     ):
-# # #         payload = {"target": target_col} if target_col else {}
-
-# # #         with st.spinner("⚔️ Training models (RF vs XGB vs LGB)..."):
-# # #             try:
-# # #                 resp = requests.post(
-# # #                     f"{API}/train/{dataset_id}",
-# # #                     json=payload,
-# # #                     timeout=180
-# # #                 )
-
-# # #                 if resp.status_code != 200:
-# # #                     st.error(f"Backend error: {resp.status_code}")
-# # #                     st.stop()
-
-# # #                 result = resp.json()
-# # #                 if result.get("status") != "ok":
-# # #                     st.error(result.get("message", "Training failed"))
-# # #                     st.stop()
-
-# # #                 st.session_state.last_training = result
-# # #                 st.success(
-# # #                     f"🏆 {result['best_model']} WINS with score {result['best_score']:.4f}"
-# # #                 )
-# # #                 st.balloons()
-# # #                 st.cache_data.clear()
-# # #                 st.rerun()
-
-# # #             except requests.exceptions.Timeout:
-# # #                 st.error("⏰ Training timed out (180s). Try a smaller dataset.")
-# # #             except Exception as e:
-# # #                 st.error(f"Connection error: {str(e)}")
-
-# # # with col2:
-# # #     if model_meta and model_meta.get("status") == "ok":
-# # #         st.metric("🎯 Target", model_meta.get("target", "Auto"))
-# # #         st.metric("📈 Task", model_meta.get("task", "").upper())
-# # #         st.metric("🔧 Features", len(model_meta.get("features", [])))
-
-# # # # ---------------- NO MODEL YET ----------------
-# # # if not model_meta or model_meta.get("status") != "ok":
-# # #     st.info(
-# # #         """
-# # # 👆 **Click “Start Model Battle” to:**
-# # # - Train **3 models** (RF, XGBoost, LightGBM)
-# # # - Use **20% test split**
-# # # - Automatically select **best model**
-# # # - Save it for predictions
-# # # """
-# # #     )
-# # #     st.stop()
-# # # # ---------------- RESULTS DASHBOARD ----------------
-# # # results = model_meta.get("leaderboard", {})
-
-# # # if not results:
-# # #     st.error("No leaderboard data found. Train the model first.")
-# # #     st.stop()
-
-# # # best_model = model_meta.get("best_model", "").lower()
-# # # best_score = model_meta.get("best_score")
-
-# # # st.markdown("---")
-# # # st.markdown("## 🏆 Model Leaderboard")
-
-# # # lb_df = (
-# # #     pd.DataFrame(
-# # #         [{"Model": k.upper(), "Score": v} for k, v in results.items()]
-# # #     )
-# # #     .sort_values("Score", ascending=False)
-# # #     .reset_index(drop=True)
-# # # )
-
-# # # st.dataframe(
-# # #     lb_df.style
-# # #     .background_gradient(subset=["Score"], cmap="Blues")
-# # #     .format({"Score": "{:.4f}"}),
-# # #     use_container_width=True
-# # # )
-
-# # # # ---------------- SCORE COMPARISON ----------------
-# # # st.markdown("## 📊 Score Comparison")
-
-# # # fig = px.bar(
-# # #     lb_df,
-# # #     x="Model",
-# # #     y="Score",
-# # #     color="Model",
-# # #     text="Score",
-# # # )
-# # # fig.update_traces(texttemplate="%{text:.4f}", textposition="outside")
-# # # fig.update_layout(height=420)
-# # # st.plotly_chart(fig, use_container_width=True)
-
-# # # # ---------------- BEST MODEL DETAILS ----------------
-# # # st.markdown("## 🥇 Champion Model")
-
-# # # c1, c2, c3 = st.columns(3)
-
-# # # with c1:
-# # #     st.metric("Champion", best_model.upper())
-
-# # # with c2:
-# # #     st.metric("Best Score", f"{best_score:.4f}")
-
-# # # with c3:
-# # #     st.metric("Task", model_meta.get("task", "").upper())
-
-# # # st.info(
-# # #     f"""
-# # # **Why this model won**
-# # # - Highest validation score on unseen data
-# # # - Robust to feature scaling & missing values
-# # # - Suitable for enterprise production inference
-# # # """
-# # # )
-
-# # # # ---------------- EXPORT + NEXT ----------------
-# # # st.markdown("---")
-# # # st.markdown("## 🚀 Next Steps")
-
-# # # n1, n2 = st.columns(2)
-
-# # # with n1:
-# # #     if st.button("🔮 Go to Predict", type="primary", use_container_width=True):
-# # #         st.switch_page("pages/5_Predict.py")
-
-# # # with n2:
-# # #     st.download_button(
-# # #         "💾 Export Training Report",
-# # #         data=json.dumps(model_meta, indent=2),
-# # #         file_name=f"AutoML_Report_{dataset_id}.json",
-# # #         mime="application/json",
-# # #         use_container_width=True,
-# # #     )
-
-# # # st.caption(
-# # #     f"⚡ Trained at {model_meta.get('trained_at', 'N/A')} | "
-# # #     f"{len(model_meta.get('features', [])) if model_meta.get('features') else 'N/A'} features | "
-# # #     f"{model_meta.get('task', '').upper()}"
-# # # )
-
-# # import streamlit as st
-# # import requests
-# # import pandas as pd
-# # import plotly.express as px
-
-# # API = "http://127.0.0.1:8000/api"
-
-# # st.set_page_config(page_title="Enterprise AutoML", layout="wide")
-
-# # dataset_id = st.session_state.get("dataset_id")
-# # if not dataset_id:
-# #     st.error("Upload dataset first")
-# #     st.stop()
-
-# # st.title("🤖 Enterprise AutoML Training")
-
-# # # ---------------- TARGET ----------------
-# # target = st.selectbox(
-# #     "Select target column",
-# #     options=st.session_state.get("columns", [])
-# # )
-
-# # # ---------------- TRAIN ----------------
-# # if st.button("🚀 Train Models", type="primary"):
-# #     with st.spinner("Training models..."):
-# #         resp = requests.post(
-# #             f"{API}/train/{dataset_id}",
-# #             json={"target": target},
-# #             timeout=300
-# #         )
-# #         if resp.status_code != 200:
-# #             st.error(resp.text)
-# #             st.stop()
-
-# #         st.session_state.model_meta = resp.json()
-# #         st.success("Training complete")
-
-# # meta = st.session_state.get("model_meta")
-# # if not meta:
-# #     st.stop()
-
-# # # ---------------- LEADERBOARD ----------------
-# # st.subheader("🏆 Model Leaderboard")
-
-# # rows = []
-# # for m, score in meta["leaderboard"].items():
-# #     rows.append({"Model": m.upper(), "Score": score})
-
-# # df = pd.DataFrame(rows).sort_values("Score", ascending=False)
-# # st.dataframe(df, use_container_width=True)
-
-# # fig = px.bar(df, x="Model", y="Score", color="Model")
-# # st.plotly_chart(fig, use_container_width=True)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# import streamlit as st
-# import requests
-# import pandas as pd
-# import plotly.express as px
-# import json
-
-# API = "http://127.0.0.1:8000/api"
-
-# st.set_page_config(
-#     page_title="OmniSearch AI – Enterprise AutoML",
-#     layout="wide"
-# )
-
-# # =====================================================
-# # DATASET CHECK
-# # =====================================================
-# dataset_id = st.session_state.get("dataset_id")
-# columns = st.session_state.get("columns")
-
-# if not dataset_id or not columns:
-#     st.error("🚫 No dataset loaded. Upload a dataset first.")
-#     st.stop()
-
-# # =====================================================
-# # HEADER
-# # =====================================================
-# st.markdown(
-#     """
-#     <div style="padding:2rem;border-radius:14px;
-#                 background:linear-gradient(135deg,#1e3c72,#2a5298);
-#                 color:white">
-#         <h1>🤖 Enterprise AutoML Training</h1>
-#         <p>Reproducible • Explainable • Production-ready</p>
-#     </div>
-#     """,
-#     unsafe_allow_html=True
-# )
-
-# st.markdown("---")
-
-# # =====================================================
-# # TARGET SELECTION (MANDATORY)
-# # =====================================================
-# st.subheader("🎯 Target Variable")
-
-# target = st.selectbox(
-#     "Select target column",
-#     options=columns,
-#     help="Explicit target selection is mandatory in production ML"
-# )
-
-# # =====================================================
-# # TRAIN ACTION
-# # =====================================================
-# left, right = st.columns([3, 2])
-
-# with left:
-#     if st.button("🚀 Train Model", type="primary", use_container_width=True):
-#         with st.spinner("Training model…"):
-#             resp = requests.post(
-#                 f"{API}/train/{dataset_id}",
-#                 json={"target": target},
-#                 timeout=300
-#             )
-
-#         if resp.status_code != 200:
-#             st.error(f"Backend error:\n{resp.text}")
-#             st.stop()
-
-#         result = resp.json()
-
-#         if result.get("status") != "ok":
-#             st.error("Training failed")
-#             st.json(result)
-#             st.stop()
-
-#         st.session_state.model_meta = result
-#         st.success("✅ Training completed successfully")
-#         st.rerun()
-
-# with right:
-#     st.info(
-#         """
-#         **Training pipeline**
-#         • Deterministic preprocessing  
-#         • Robust ensemble model  
-#         • Versioned artifacts  
-#         • Auditable metadata  
-#         """
-#     )
-
-# # =====================================================
-# # LOAD TRAINING RESULTS
-# # =====================================================
-# model_meta = st.session_state.get("model_meta")
-# if not model_meta:
-#     st.warning("No trained model yet.")
-#     st.stop()
-
-# # =====================================================
-# # SUMMARY
-# # =====================================================
-# st.markdown("## 🧠 Training Summary")
-
-# m1, m2, m3 = st.columns(3)
-# m1.metric("Task", model_meta["task"].upper())
-# m2.metric("Best Model", model_meta["best_model"])
-# m3.metric("Best Score", f"{model_meta['best_score']:.4f}")
-
-# # =====================================================
-# # LEADERBOARD (SAFE)
-# # =====================================================
-# st.markdown("## 🏆 Model Leaderboard")
-
-# leaderboard = model_meta.get("leaderboard", {})
-# rows = []
-
-# for model, score in leaderboard.items():
-#     if isinstance(score, (int, float)):
-#         rows.append({"Model": model, "Score": float(score)})
-
-# if not rows:
-#     st.warning("No valid leaderboard data.")
-#     st.json(leaderboard)
-#     st.stop()
-
-# df = pd.DataFrame(rows).sort_values("Score", ascending=False)
-
-# st.dataframe(
-#     df.style.format({"Score": "{:.4f}"})
-#       .background_gradient(subset=["Score"], cmap="Blues"),
-#     use_container_width=True
-# )
-
-# # =====================================================
-# # VISUAL COMPARISON
-# # =====================================================
-# st.markdown("## 📊 Performance Comparison")
-
-# fig = px.bar(
-#     df,
-#     x="Model",
-#     y="Score",
-#     text="Score",
-#     color="Model"
-# )
-# fig.update_traces(texttemplate="%{text:.4f}", textposition="outside")
-# fig.update_layout(height=420)
-
-# st.plotly_chart(fig, use_container_width=True)
-
-# # =====================================================
-# # MODEL SELECTION RATIONALE
-# # =====================================================
-# best = df.iloc[0]
-
-# st.markdown("## 🥇 Champion Model Rationale")
-# st.success(
-#     f"""
-#     **{best['Model']}** was selected because it achieved the highest
-#     validation score (**{best['Score']:.4f}**).
-
-#     **Decision criteria**
-#     • Objective metric optimization  
-#     • Stable preprocessing pipeline  
-#     • Ensemble robustness  
-#     """
-# )
-
-# # =====================================================
-# # EXPORT
-# # =====================================================
-# st.markdown("## 📥 Export Artifacts")
-
-# st.download_button(
-#     "Download Training Metadata (JSON)",
-#     data=json.dumps(model_meta, indent=2),
-#     file_name=f"training_report_{dataset_id}.json",
-#     mime="application/json",
-#     use_container_width=True
-# )
-
-# st.caption("Enterprise AutoML • Versioned • Auditable • Production-ready")
-
-
 import streamlit as st
 import requests
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import json
+import time
+from datetime import datetime
 
-API = "http://127.0.0.1:8000/api"
+API = "http://127.0.0.1:8003/api"
 
 st.set_page_config(
-    page_title="OmniSearch AI – Enterprise AutoML",
-    layout="wide"
+    page_title="OmniSearch AI – Industrial AutoML Training",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 # =====================================================
@@ -507,15 +26,40 @@ if not dataset_id or not columns:
     st.stop()
 
 # =====================================================
+# SIDEBAR CONFIG
+# =====================================================
+with st.sidebar:
+    st.markdown("### ⚙️ Configuration")
+    st.markdown("---")
+    
+    # Model selection
+    st.markdown("**Algorithms to Train:**")
+    train_regression = st.checkbox("Regression Models", value=True, 
+                                   help="Linear, Polynomial, Ridge, Lasso, Decision Tree, Random Forest, Gradient Boosting")
+    train_classification = st.checkbox("Classification Models", value=True,
+                                       help="Logistic Regression, Decision Tree, Random Forest, Gradient Boosting, Naive Bayes, SVM, KNN")
+    
+    st.markdown("---")
+    st.markdown("**Training Parameters:**")
+    test_size = st.slider("Test Size (%)", 10, 50, 20, 5)
+    random_state = st.number_input("Random State", value=42, min_value=0)
+    
+    st.markdown("---")
+    st.caption("Industrial ML Pipeline • v2.0")
+
+# =====================================================
 # HEADER
 # =====================================================
 st.markdown(
     """
-    <div style="padding:2.2rem;border-radius:16px;
-                background:linear-gradient(135deg,#1e3c72,#2a5298);
-                color:white">
-        <h1>🤖 Enterprise AutoML Training</h1>
-        <p>Multi-model evaluation • Deterministic • Auditable</p>
+    <div style="padding:2.5rem;border-radius:20px;
+                background:linear-gradient(135deg,#1e3c72,#2a5298,#3a7bd5);
+                color:white;text-align:center;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
+        <h1 style='margin:0;font-size:3rem;'>🚀 Industrial AutoML Training</h1>
+        <p style='margin:10px 0 0 0;font-size:1.2rem;opacity:0.9;'>
+            10+ Algorithms • Advanced Metrics • Enterprise-Grade
+        </p>
     </div>
     """,
     unsafe_allow_html=True
@@ -524,163 +68,327 @@ st.markdown(
 st.markdown("---")
 
 # =====================================================
-# TARGET SELECTION
+# TABS
 # =====================================================
-st.subheader("🎯 Target Variable")
-
-target = st.selectbox(
-    "Select target column",
-    options=columns,
-    help="Explicit target selection is mandatory in production ML systems"
-)
+tab_setup, tab_training, tab_results, tab_advanced = st.tabs([
+    "🎯 Setup", "⚡ Training", "📊 Results", "🔬 Advanced"
+])
 
 # =====================================================
-# TRAIN ACTION
+# TAB 1: SETUP
 # =====================================================
-left, right = st.columns([3, 2])
-
-with left:
-    if st.button("🚀 Run AutoML Training", type="primary", use_container_width=True):
-        with st.spinner("Running AutoML (multiple models competing)…"):
-            resp = requests.post(
-                f"{API}/train/{dataset_id}",
-                json={"target": target},
-                timeout=300
-            )
-
-        if resp.status_code != 200:
-            st.error(f"Backend error:\n{resp.text}")
-            st.stop()
-
-        payload = resp.json()
-
-        if payload.get("status") != "ok":
-            st.error("Training failed")
-            st.json(payload)
-            st.stop()
-
-        st.session_state.model_meta = payload
-        st.success("✅ AutoML training completed")
-        st.rerun()
-
-with right:
-    st.info(
-        """
-        **AutoML behavior**
-        • Detects task type automatically  
-        • Trains 4–5 suitable models  
-        • Uses a fixed validation split  
-        • Selects best model objectively  
-        """
-    )
+with tab_setup:
+    st.markdown("## 🎯 Model Configuration")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### Target Variable")
+        target = st.selectbox(
+            "Select target column",
+            options=columns,
+            help="The column to predict. Must be numeric for regression, categorical for classification."
+        )
+        
+        # Auto-detect task
+        if target:
+            # Sample data to detect task
+            try:
+                sample_resp = requests.get(f"{API}/datasets/{dataset_id}/sample", timeout=10)
+                if sample_resp.status_code == 200:
+                    sample_data = sample_resp.json()
+                    sample_df = pd.DataFrame(sample_data)
+                    if target in sample_df.columns:
+                        unique_vals = sample_df[target].nunique()
+                        detected_task = "Classification" if unique_vals <= 15 else "Regression"
+                        st.info(f"🔍 Detected Task: **{detected_task}** ({unique_vals} unique values)")
+            except:
+                pass
+    
+    with col2:
+        st.markdown("### Dataset Overview")
+        
+        # Get dataset info
+        try:
+            info_resp = requests.get(f"{API}/datasets/{dataset_id}/info", timeout=10)
+            if info_resp.status_code == 200:
+                info = info_resp.json()
+                st.metric("Total Rows", info.get("rows", "N/A"))
+                st.metric("Total Columns", info.get("columns", "N/A"))
+                st.metric("Data Types", f"{info.get('dtypes', {})}")
+        except:
+            st.warning("Could not fetch dataset info")
+    
+    st.markdown("---")
+    st.markdown("### Algorithm Selection")
+    
+    # Show selected algorithms
+    selected_models = []
+    if train_regression:
+        selected_models.extend([
+            "LinearRegression", "PolynomialRegression", "Ridge", "Lasso", 
+            "DecisionTree", "RandomForest", "GradientBoosting"
+        ])
+    if train_classification:
+        selected_models.extend([
+            "LogisticRegression", "DecisionTree", "RandomForest", "GradientBoosting",
+            "NaiveBayes", "SVM", "KNN"
+        ])
+    
+    st.write(f"**{len(selected_models)} models selected:** {', '.join(selected_models[:5])}{'...' if len(selected_models) > 5 else ''}")
 
 # =====================================================
-# LOAD RESULTS
+# TAB 2: TRAINING
+# =====================================================
+with tab_training:
+    st.markdown("## ⚡ Model Training")
+    
+    # Training button
+    col1, col2 = st.columns([3, 1])
+    
+    with col1:
+        if st.button("🚀 Start Industrial Training", type="primary", use_container_width=True):
+            payload = {
+                "target": target,
+                "test_size": test_size / 100,
+                "random_state": random_state,
+                "train_regression": train_regression,
+                "train_classification": train_classification
+            }
+            
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            with st.spinner("🔬 Training industrial ML models..."):
+                try:
+                    status_text.text("Initializing training pipeline...")
+                    progress_bar.progress(10)
+                    
+                    start_time = time.time()
+                    resp = requests.post(
+                        f"{API}/train/{dataset_id}",
+                        json=payload,
+                        timeout=600  # 10 minutes
+                    )
+                    
+                    progress_bar.progress(90)
+                    status_text.text("Finalizing results...")
+                    
+                    if resp.status_code != 200:
+                        st.error(f"Backend error: {resp.status_code}")
+                        st.json(resp.json() if resp.content else resp.text)
+                        st.stop()
+                    
+                    result = resp.json()
+                    
+                    if result.get("status") != "ok":
+                        st.error("Training failed")
+                        st.json(result)
+                        st.stop()
+                    
+                    # Store results
+                    st.session_state.model_meta = result
+                    st.session_state.training_time = time.time() - start_time
+                    
+                    progress_bar.progress(100)
+                    status_text.text("✅ Training completed successfully!")
+                    
+                    st.success(f"🏆 Training completed in {st.session_state.training_time:.1f}s")
+                    st.balloons()
+                    
+                    # Auto-switch to results tab
+                    st.rerun()
+                    
+                except requests.exceptions.Timeout:
+                    st.error("⏰ Training timed out (10min). Try smaller dataset or fewer models.")
+                except Exception as e:
+                    st.error(f"Connection error: {str(e)}")
+                finally:
+                    progress_bar.empty()
+                    status_text.empty()
+    
+    with col2:
+        st.markdown("### Training Info")
+        st.metric("Models", len(selected_models))
+        st.metric("Test Size", f"{test_size}%")
+        st.metric("Random State", random_state)
+        
+        if "training_time" in st.session_state:
+            st.metric("Last Training", f"{st.session_state.training_time:.1f}s")
+
+# =====================================================
+# LOAD TRAINING RESULTS
 # =====================================================
 model_meta = st.session_state.get("model_meta")
+
 if not model_meta:
-    st.warning("No trained model yet.")
-    st.stop()
+    with tab_results:
+        st.info("👆 Configure and start training to see results")
+    with tab_advanced:
+        st.info("👆 Train models first to access advanced analytics")
+else:
+    # =====================================================
+    # TAB 3: RESULTS
+    # =====================================================
+    with tab_results:
+        st.markdown("## 📊 Training Results")
+        
+        # Overview metrics
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("🏆 Best Model", model_meta.get("best_model", "N/A"))
+        
+        with col2:
+            st.metric("📈 Best Score", f"{model_meta.get('best_score', 0):.4f}")
+        
+        with col3:
+            st.metric("🎯 Task", model_meta.get("task", "N/A").upper())
+        
+        with col4:
+            st.metric("⏱️ Trained", model_meta.get("trained_at", "N/A"))
+        
+        st.markdown("---")
+        
+        # Leaderboard
+        st.markdown("### 🏆 Model Leaderboard")
+        
+        leaderboard = model_meta.get("leaderboard", [])
+        if leaderboard:
+            df_lb = pd.DataFrame(leaderboard)
+            
+            # Style the dataframe
+            def highlight_best(s):
+                is_best = s.name == df_lb['score'].idxmax()
+                return ['background-color: #e6f7ff' if is_best else '' for _ in s]
+            
+            styled_df = df_lb.style.apply(highlight_best, axis=0).format({
+                "score": "{:.4f}",
+                "train_rows": "{:,}",
+                "test_rows": "{:,}"
+            })
+            
+            st.dataframe(styled_df, use_container_width=True)
+            
+            # Performance comparison chart
+            st.markdown("### 📊 Performance Comparison")
+            
+            fig = px.bar(
+                df_lb,
+                x="model",
+                y="score",
+                color="model",
+                text="score",
+                title="Model Performance Scores",
+                labels={"model": "Algorithm", "score": "Score"}
+            )
+            fig.update_traces(texttemplate="%{text:.4f}", textposition="outside")
+            fig.update_layout(showlegend=False, height=500)
+            st.plotly_chart(fig, use_container_width=True)
+        
+        # Model details
+        st.markdown("### 🔍 Model Details")
+        
+        model_details = model_meta.get("model_details", [])
+        if model_details:
+            selected_model = st.selectbox(
+                "Select model for detailed analysis",
+                options=[m["model"] for m in model_details],
+                index=0
+            )
+            
+            for detail in model_details:
+                if detail["model"] == selected_model:
+                    metrics = detail.get("metrics", {})
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        st.markdown(f"**{selected_model} Metrics**")
+                        for key, value in metrics.items():
+                            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                                st.metric(key.replace("_", " ").title(), f"{value:.4f}")
+                            elif key == "confusion_matrix" and value:
+                                st.write("Confusion Matrix:")
+                                cm_df = pd.DataFrame(value)
+                                st.dataframe(cm_df)
+                    
+                    with col2:
+                        st.markdown("**Sample Predictions**")
+                        preds = detail.get("predictions_sample", [])
+                        if preds:
+                            st.write(f"First 10 predictions: {preds}")
+                    
+                    break
+    
+    # =====================================================
+    # TAB 4: ADVANCED
+    # =====================================================
+    with tab_advanced:
+        st.markdown("## 🔬 Advanced Analytics")
+        
+        # Feature importance
+        st.markdown("### 🎯 Feature Importance")
+        
+        top_features = model_meta.get("top_features", [])
+        if top_features:
+            st.write("Top features for best model:")
+            for i, feat in enumerate(top_features[:10], 1):
+                st.write(f"{i}. {feat}")
+        
+        # Dropped columns
+        dropped_cols = model_meta.get("dropped_id_columns", [])
+        if dropped_cols:
+            st.markdown("### 🗑️ Dropped ID Columns")
+            st.write("Automatically removed unique identifier columns:")
+            for col in dropped_cols:
+                st.write(f"- {col}")
+        
+        # Export options
+        st.markdown("---")
+        st.markdown("### 💾 Export")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.download_button(
+                "📄 Download Full Report (JSON)",
+                data=json.dumps(model_meta, indent=2),
+                file_name=f"industrial_automl_report_{dataset_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+        
+        with col2:
+            # Generate summary report
+            summary = {
+                "dataset_id": dataset_id,
+                "target": model_meta.get("target"),
+                "task": model_meta.get("task"),
+                "best_model": model_meta.get("best_model"),
+                "best_score": model_meta.get("best_score"),
+                "models_trained": len(model_meta.get("leaderboard", [])),
+                "training_time": st.session_state.get("training_time", "N/A"),
+                "trained_at": model_meta.get("trained_at")
+            }
+            
+            st.download_button(
+                "📊 Download Summary (JSON)",
+                data=json.dumps(summary, indent=2),
+                file_name=f"summary_report_{dataset_id}.json",
+                mime="application/json",
+                use_container_width=True
+            )
+        
+        # Raw metadata
+        with st.expander("🔧 Raw Training Metadata"):
+            st.json(model_meta)
 
 # =====================================================
-# SUMMARY METRICS
+# FOOTER
 # =====================================================
-st.markdown("## 🧠 Training Summary")
-
-m1, m2, m3 = st.columns(3)
-
-m1.metric("Task Type", model_meta["task"].upper())
-m2.metric("Champion Model", model_meta["best_model"])
-m3.metric("Best Score", f"{model_meta['best_score']:.4f}")
-
-# =====================================================
-# LEADERBOARD (ENTERPRISE-SAFE)
-# =====================================================
-st.markdown("## 🏆 Model Leaderboard")
-
-leaderboard = model_meta.get("leaderboard", [])
-
-if not isinstance(leaderboard, list) or len(leaderboard) == 0:
-    st.error("Invalid leaderboard format returned by backend")
-    st.json(leaderboard)
-    st.stop()
-
-df = pd.DataFrame(leaderboard)
-
-# Defensive checks
-required_cols = {"model", "score", "train_rows", "test_rows"}
-if not required_cols.issubset(df.columns):
-    st.error("Leaderboard schema mismatch")
-    st.json(df)
-    st.stop()
-
-df = df.sort_values("score", ascending=False)
-
-st.dataframe(
-    df.rename(columns={
-        "model": "Model",
-        "score": "Score",
-        "train_rows": "Train Rows",
-        "test_rows": "Test Rows"
-    }).style
-      .format({"Score": "{:.4f}"})
-      .background_gradient(subset=["Score"], cmap="Blues"),
-    use_container_width=True
-)
-
-# =====================================================
-# VISUAL COMPARISON
-# =====================================================
-st.markdown("## 📊 Model Performance Comparison")
-
-fig = px.bar(
-    df,
-    x="model",
-    y="score",
-    color="model",
-    text="score",
-    labels={"model": "Model", "score": "Validation Score"},
-    height=450
-)
-
-fig.update_traces(texttemplate="%{text:.4f}", textposition="outside")
-fig.update_layout(showlegend=False)
-
-st.plotly_chart(fig, use_container_width=True)
-
-# =====================================================
-# MODEL SELECTION EXPLANATION
-# =====================================================
-st.markdown("## 🥇 Why This Model Won")
-
-explanation = model_meta.get("explanation", {})
-
-st.success(
-    f"""
-    **Champion Model:** {model_meta['best_model']}  
-    **Validation Score:** {model_meta['best_score']:.4f}
-
-    **Why selected**
-    • {explanation.get('why_best', 'Highest validation score')}
-
-    **Why others lost**
-    • {explanation.get('why_not_others', 'Lower generalization performance')}
-    """
-)
-
-# =====================================================
-# EXPORT
-# =====================================================
-st.markdown("## 📥 Export")
-
-st.download_button(
-    "Download Training Report (JSON)",
-    data=json.dumps(model_meta, indent=2),
-    file_name=f"automl_training_{dataset_id}.json",
-    mime="application/json",
-    use_container_width=True
-)
-
+st.markdown("---")
 st.caption(
-    "Enterprise AutoML • Multi-model • Deterministic • Audit-ready"
+    "Industrial AutoML • Multi-algorithm comparison • Enterprise-grade training • "
+    f"Dataset: {dataset_id} • Models: {len(selected_models)}"
 )

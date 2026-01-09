@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 
-API = "http://127.0.0.1:8000"
+API = "http://127.0.0.1:8003"
 st.title("💡 Model Explainability")
 
 if 'dataset_id' not in st.session_state:

@@ -211,8 +211,12 @@
 
 import streamlit as st
 import requests
+import pandas as pd
+import plotly.express as px
+import json
+from io import StringIO
 
-API = "http://127.0.0.1:8000/api"
+API = "http://127.0.0.1:8003/api"
 
 st.set_page_config(page_title="OmniSearch AI – Predict", layout="wide")
 
@@ -244,77 +248,213 @@ st.markdown("# 🎯 Enterprise Prediction Engine")
 st.markdown(f"**Dataset:** {dataset_id} | **Model:** {model_meta['best_model']} (Score: {model_meta['best_score']:.3f})")
 
 # =====================================================
-# MODE SELECTION (HONEST LABELING)
+# PREDICTION TABS
 # =====================================================
-mode = st.radio(
-    "Prediction Mode",
-    ["Guided Mode (Top Impact Inputs)", "Full Mode (All Features)"],
-    horizontal=True,
-    help="Guided: Only high-impact features shown, others auto-filled with smart defaults.\nFull: All features required.",
-)
-
-use_top = "Guided" in mode
-features = model_meta["top_features"] if use_top else model_meta["raw_columns"]
-defaults = model_meta["feature_defaults"]
+pred_tabs = st.tabs(["🔮 Single Prediction", "📊 Batch Prediction", "📈 Model Insights", "⚙️ Settings"])
 
 # =====================================================
-# INPUT FORM
+# TAB 1: SINGLE PREDICTION
 # =====================================================
-st.markdown("### 📝 Input Features")
+with pred_tabs[0]:
+    st.markdown("## 🔮 Single Prediction")
 
-payload = {}
-payload["_mode"] = "top" if use_top else "full"
+    # MODE SELECTION
+    mode = st.radio(
+        "Prediction Mode",
+        ["Guided Mode (Top Impact Inputs)", "Full Mode (All Features)"],
+        horizontal=True,
+        help="Guided: Only high-impact features shown, others auto-filled with smart defaults.\nFull: All features required.",
+    )
 
-cols = st.columns(3)
-for i, f in enumerate(features):
-    with cols[i % 3]:
-        default_val = defaults.get(f, "")
-        # Convert to string safely
-        display_default = str(default_val) if default_val is not None else ""
-        payload[f] = st.text_input(
-            label=f,
-            value=display_default,
-            key=f"input_{f}",  # Unique key to prevent conflicts
-        )
+    use_top = "Guided" in mode
+    features = model_meta["top_features"] if use_top else model_meta["raw_columns"]
+    defaults = model_meta["feature_defaults"]
+
+    # INPUT FORM
+    st.markdown("### 📝 Input Features")
+
+    payload = {}
+    payload["_mode"] = "top" if use_top else "full"
+
+    cols = st.columns(3)
+    for i, f in enumerate(features):
+        with cols[i % 3]:
+            default_val = defaults.get(f, "")
+            display_default = str(default_val) if default_val is not None else ""
+            payload[f] = st.text_input(
+                label=f,
+                value=display_default,
+                key=f"single_{f}",
+            )
+
+    # PREDICT
+    st.markdown("---")
+    if st.button("🚀 Predict", type="primary", use_container_width=True):
+        with st.spinner("Scoring with enterprise model…"):
+            try:
+                r = requests.post(f"{API}/predict/{dataset_id}", json=payload, timeout=30)
+                r.raise_for_status()
+                res = r.json()
+            except requests.exceptions.RequestException as e:
+                st.error(f"API Error: {str(e)}")
+                st.stop()
+            except ValueError:
+                st.error("Invalid response from server.")
+                st.stop()
+
+        if res.get("status") != "ok":
+            st.error(res.get("detail", res.get("error", "Prediction failed")))
+            st.stop()
+
+        st.success("✅ Prediction Successful")
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("**Prediction**", res["prediction"])
+        if res.get("confidence") is not None:
+            c2.metric("**Confidence**", f"{res['confidence']*100:.1f}%")
+        c3.metric("**Mode Used**", res["mode"].upper())
+
+        with st.expander("🔍 Transparency & Audit Trail"):
+            st.write("**Used Features:**", ", ".join(res["used_features"]))
+            auto_filled = res.get("auto_filled", [])
+            if auto_filled:
+                st.warning(f"Auto-filled with defaults: {', '.join(auto_filled)}")
+            else:
+                st.success("All features provided by user — no auto-fill")
 
 # =====================================================
-# PREDICTION
+# TAB 2: BATCH PREDICTION
 # =====================================================
-if st.button("🚀 Predict", type="primary", use_container_width=True):
-    with st.spinner("Scoring with enterprise model…"):
+with pred_tabs[1]:
+    st.markdown("## 📊 Batch Prediction")
+
+    st.markdown("Upload a CSV file with the same features as your training data for batch predictions.")
+
+    uploaded_file = st.file_uploader("Choose CSV file", type="csv")
+
+    if uploaded_file is not None:
         try:
-            r = requests.post(f"{API}/predict/{dataset_id}", json=payload, timeout=30)
-            r.raise_for_status()
-            res = r.json()
-        except requests.exceptions.RequestException as e:
-            st.error(f"API Error: {str(e)}")
-            st.stop()
-        except ValueError:
-            st.error("Invalid response from server.")
-            st.stop()
+            df_batch = pd.read_csv(uploaded_file)
+            st.markdown("### Preview of Uploaded Data")
+            st.dataframe(df_batch.head(), use_container_width=True)
 
-    if res.get("status") != "ok":
-        st.error(res.get("detail", res.get("error", "Prediction failed")))
-        st.stop()
+            st.markdown(f"**Rows:** {len(df_batch)} | **Columns:** {len(df_batch.columns)}")
 
-    st.success("✅ Prediction Successful")
+            # Check for required features
+            required_features = set(model_meta["raw_columns"])
+            uploaded_features = set(df_batch.columns)
+            missing = required_features - uploaded_features
+            extra = uploaded_features - required_features
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("**Prediction**", res["prediction"])
-    if res.get("confidence") is not None:
-        c2.metric("**Confidence**", f"{res['confidence']*100:.1f}%")
-    c3.metric("**Mode Used**", res["mode"].upper())
+            if missing:
+                st.error(f"Missing required features: {', '.join(missing)}")
+            else:
+                if extra:
+                    st.warning(f"Extra features (will be ignored): {', '.join(extra)}")
 
-    with st.expander("🔍 Transparency & Audit Trail"):
-        st.write("**Used Features:**", ", ".join(res["used_features"]))
-        auto_filled = res.get("auto_filled", [])
-        if auto_filled:
-            st.warning(f"Auto-filled with defaults: {', '.join(auto_filled)}")
-        else:
-            st.success("All features provided by user — no auto-fill")
+                if st.button("🚀 Run Batch Prediction", type="primary"):
+                    with st.spinner("Processing batch predictions..."):
+                        # Convert to list of dicts
+                        batch_data = df_batch.to_dict('records')
 
-    # Optional: show dataset source
-    if "data_source" in model_meta:
-        st.info(f"Model trained on: **{model_meta['data_source'].upper()}** data")
+                        # Make batch request (assuming backend supports it, else loop)
+                        predictions = []
+                        for row in batch_data:
+                            payload = {"_mode": "full"}
+                            payload.update(row)
+                            try:
+                                r = requests.post(f"{API}/predict/{dataset_id}", json=payload, timeout=30)
+                                if r.status_code == 200:
+                                    res = r.json()
+                                    if res.get("status") == "ok":
+                                        predictions.append(res["prediction"])
+                                    else:
+                                        predictions.append("Error")
+                                else:
+                                    predictions.append("Error")
+                            except:
+                                predictions.append("Error")
+
+                        df_batch["Prediction"] = predictions
+                        st.success("Batch prediction completed!")
+
+                        st.markdown("### Results Preview")
+                        st.dataframe(df_batch.head(10), use_container_width=True)
+
+                        # Download results
+                        csv = df_batch.to_csv(index=False)
+                        st.download_button(
+                            "Download Results CSV",
+                            csv,
+                            f"batch_predictions_{dataset_id}.csv",
+                            "text/csv",
+                            use_container_width=True
+                        )
+
+        except Exception as e:
+            st.error(f"Error processing file: {str(e)}")
+
+# =====================================================
+# TAB 3: MODEL INSIGHTS
+# =====================================================
+with pred_tabs[2]:
+    st.markdown("## 📈 Model Insights")
+
+    # Model Summary
+    st.markdown("### 🤖 Model Summary")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Model Type", model_meta["best_model"])
+    col2.metric("Validation Score", f"{model_meta['best_score']:.4f}")
+    col3.metric("Task", model_meta["task"].upper())
+
+    # Feature Importance
+    if "top_features" in model_meta:
+        st.markdown("### 🎯 Top Features")
+        top_features = model_meta["top_features"][:10]  # Top 10
+        fig = px.bar(
+            x=top_features,
+            y=list(range(len(top_features), 0, -1)),
+            orientation='h',
+            labels={'x': 'Feature', 'y': 'Importance Rank'},
+            title="Feature Importance Ranking"
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    # Training Details
+    st.markdown("### 📊 Training Details")
+    details = {
+        "Training Rows": model_meta.get("train_rows"),
+        "Test Rows": model_meta.get("test_rows"),
+        "Total Features": len(model_meta.get("raw_columns", [])),
+        "Data Source": model_meta.get("data_source", "Unknown")
+    }
+    st.json(details)
+
+# =====================================================
+# TAB 4: SETTINGS
+# =====================================================
+with pred_tabs[3]:
+    st.markdown("## ⚙️ Prediction Settings")
+
+    st.markdown("### API Configuration")
+    api_url = st.text_input("API Endpoint", value=f"{API}/predict/{dataset_id}", disabled=True)
+
+    st.markdown("### Model Information")
+    st.json({
+        "model": model_meta["best_model"],
+        "score": model_meta["best_score"],
+        "task": model_meta["task"],
+        "features": len(model_meta.get("raw_columns", []))
+    })
+
+    st.markdown("### Export Configuration")
+    if st.button("Export Model Metadata"):
+        st.download_button(
+            "Download Model JSON",
+            json.dumps(model_meta, indent=2),
+            f"model_metadata_{dataset_id}.json",
+            "application/json",
+            use_container_width=True
+        )
 
 st.caption("Enterprise-Grade • Drift-Protected • Transparent • Audit-Ready")

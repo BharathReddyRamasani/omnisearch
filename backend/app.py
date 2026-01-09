@@ -1746,8 +1746,14 @@ def train(dataset_id: str, payload: dict):
     target = payload.get("target")
     if not target:
         raise HTTPException(400, "Target column name required in payload")
+    
+    # Extract optional parameters with defaults
+    test_size = payload.get("test_size", 0.2)
+    random_state = payload.get("random_state", 42)
+    train_regression = payload.get("train_regression", True)
+    train_classification = payload.get("train_classification", True)
 
-    result = train_model_logic(dataset_id, target)
+    result = train_model_logic(dataset_id, target, test_size, random_state, train_regression, train_classification)
     if result["status"] != "ok":
         raise HTTPException(400, result["error"])
     return safe(result)

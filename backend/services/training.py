@@ -289,18 +289,24 @@ import pandas as pd
 
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import OneHotEncoder, StandardScaler, PolynomialFeatures
 from sklearn.impute import SimpleImputer
 
 from sklearn.ensemble import (
     RandomForestClassifier, RandomForestRegressor,
     GradientBoostingClassifier, GradientBoostingRegressor
 )
-from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge, Lasso
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.naive_bayes import GaussianNB
+from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
 
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score, r2_score
+from sklearn.metrics import (
+    accuracy_score, r2_score, mean_absolute_error, mean_squared_error,
+    confusion_matrix, classification_report, roc_auc_score, precision_recall_fscore_support
+)
 
 from backend.services.utils import load_raw, load_clean, model_dir
 
@@ -358,13 +364,22 @@ def extract_defaults(X: pd.DataFrame):
 # TOP FEATURE EXTRACTION
 # =====================================================
 def extract_top_features(pipe, raw_columns, k=8):
-    model = pipe.named_steps["model"]
+    # Handle different model step names
+    if "poly_model" in pipe.named_steps:
+        model = pipe.named_steps["poly_model"].named_steps["linear"]
+    else:
+        model = pipe.named_steps["model"]
+    
     pre = pipe.named_steps["pre"]
     
-    if not hasattr(model, "feature_importances_"):
+    if not hasattr(model, "feature_importances_") and not hasattr(model, "coef_"):
         return raw_columns[:k]
     
-    importances = model.feature_importances_
+    if hasattr(model, "feature_importances_"):
+        importances = model.feature_importances_
+    else:
+        importances = np.abs(model.coef_).ravel()
+    
     feature_names = []
     
     for name, transformer, cols in pre.transformers_:
@@ -372,7 +387,20 @@ def extract_top_features(pipe, raw_columns, k=8):
             feature_names.extend(cols)
         elif name == "cat":
             ohe = transformer.named_steps["oh"]
-            feature_names.extend(ohe.get_feature_names_out(cols))
+            try:
+                feature_names.extend(ohe.get_feature_names_out(cols))
+            except Exception:
+                # Fallback if not fitted or other issues
+                feature_names.extend(cols)
+    
+    # For polynomial, features are expanded
+    if "poly_model" in pipe.named_steps:
+        poly = pipe.named_steps["poly_model"].named_steps["poly"]
+        poly_features = poly.get_feature_names_out(feature_names)
+        feature_names = poly_features
+    
+    if len(importances) != len(feature_names):
+        return raw_columns[:k]
     
     df_imp = pd.DataFrame({
         "feature": feature_names,
@@ -393,7 +421,8 @@ def extract_top_features(pipe, raw_columns, k=8):
 # =====================================================
 # MAIN TRAIN FUNCTION
 # =====================================================
-def train_model_logic(dataset_id: str, target: str):
+def train_model_logic(dataset_id: str, target: str, test_size: float = 0.2, random_state: int = 42, 
+                     train_regression: bool = True, train_classification: bool = True):
     try:
         df = load_clean(dataset_id)
         data_source = "clean"
@@ -440,46 +469,101 @@ def train_model_logic(dataset_id: str, target: str):
         ]), cat),
     ])
 
-    models = (
-        {
-            "LogisticRegression": LogisticRegression(max_iter=1000),
-            "DecisionTree": DecisionTreeClassifier(),
-            "RandomForest": RandomForestClassifier(n_estimators=100,max_depth=10, random_state=42),
-            "GradientBoosting": GradientBoostingClassifier(),
-        }
-        if task == "classification"
-        else {
+    # Build models dictionary based on task and flags
+    models = {}
+    
+    if task == "classification" and train_classification:
+        models.update({
+            "LogisticRegression": LogisticRegression(max_iter=1000, random_state=random_state),
+            "DecisionTree": DecisionTreeClassifier(random_state=random_state),
+            "RandomForest": RandomForestClassifier(n_estimators=100, max_depth=10, random_state=random_state),
+            "GradientBoosting": GradientBoostingClassifier(random_state=random_state),
+            "NaiveBayes": GaussianNB(),
+            "SVM": SVC(random_state=random_state),
+            "KNN": KNeighborsClassifier(),
+        })
+    elif task == "regression" and train_regression:
+        models.update({
             "LinearRegression": LinearRegression(),
-            "DecisionTree": DecisionTreeRegressor(),
-            "RandomForest": RandomForestRegressor(n_estimators=100,max_depth=10, random_state=42),
-            "GradientBoosting": GradientBoostingRegressor(),
-        }
-    )
+            "PolynomialRegression": Pipeline([("poly", PolynomialFeatures(degree=2)), ("linear", LinearRegression())]),
+            "Ridge": Ridge(random_state=random_state),
+            "Lasso": Lasso(random_state=random_state),
+            "DecisionTree": DecisionTreeRegressor(random_state=random_state),
+            "RandomForest": RandomForestRegressor(n_estimators=100, max_depth=10, random_state=random_state),
+            "GradientBoosting": GradientBoostingRegressor(random_state=random_state),
+        })
+    
+    if not models:
+        return {"status": "failed", "error": f"No models selected for {task} task"}
 
     scorer = accuracy_score if task == "classification" else r2_score
 
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, random_state=42)
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=test_size, random_state=random_state)
 
     leaderboard = []
     best_pipe = None
     best_score = -1e9
     best_model_name = None
+    model_details = []
 
     for name, model in models.items():
-        pipe = Pipeline([
-            ("pre", pre),
-            ("model", model)
-        ])
+        if name == "PolynomialRegression":
+            # Polynomial is already a pipeline
+            pipe = Pipeline([
+                ("pre", pre),
+                ("poly_model", model)
+            ])
+        else:
+            pipe = Pipeline([
+                ("pre", pre),
+                ("model", model)
+            ])
 
         pipe.fit(Xtr, ytr)
         preds = pipe.predict(Xte)
         score = scorer(yte, preds)
+
+        # Additional metrics
+        if task == "classification":
+            cm = confusion_matrix(yte, preds).tolist()
+            report = classification_report(yte, preds, output_dict=True, zero_division=0)
+            precision, recall, f1, _ = precision_recall_fscore_support(yte, preds, average='weighted', zero_division=0)
+            try:
+                auc = roc_auc_score(yte, pipe.predict_proba(Xte)[:, 1]) if len(np.unique(yte)) == 2 else None
+            except:
+                auc = None
+            metrics = {
+                "accuracy": round(float(score), 4),
+                "precision": round(float(precision), 4),
+                "recall": round(float(recall), 4),
+                "f1_score": round(float(f1), 4),
+                "auc": round(float(auc), 4) if auc else None,
+                "confusion_matrix": cm
+            }
+        else:
+            mae = mean_absolute_error(yte, preds)
+            mse = mean_squared_error(yte, preds)
+            rmse = np.sqrt(mse)
+            metrics = {
+                "r2_score": round(float(score), 4),
+                "mae": round(float(mae), 4),
+                "mse": round(float(mse), 4),
+                "rmse": round(float(rmse), 4)
+            }
 
         leaderboard.append({
             "model": name,
             "score": round(float(score), 4),
             "train_rows": int(len(Xtr)),
             "test_rows": int(len(Xte)),
+            "metrics": metrics
+        })
+
+        model_details.append({
+            "model": name,
+            "score": round(float(score), 4),
+            "metrics": metrics,
+            "predictions_sample": preds[:10].tolist() if len(preds) > 10 else preds.tolist()
         })
 
         if score > best_score:
@@ -504,6 +588,7 @@ def train_model_logic(dataset_id: str, target: str):
         "best_model": best_model_name,
         "best_score": round(float(best_score), 4),
         "leaderboard": leaderboard,
+        "model_details": model_details,
         "raw_columns": list(X.columns),           # Features actually used in model
         "dropped_id_columns": id_columns,         # ← NEW: audit trail
         "feature_defaults": extract_defaults(X),
@@ -516,6 +601,7 @@ def train_model_logic(dataset_id: str, target: str):
         json.dump(result, f, indent=2)
 
     return result
+
 
 
 

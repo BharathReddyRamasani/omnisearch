@@ -28,7 +28,7 @@
 import streamlit as st
 import requests
 
-API = "http://127.0.0.1:8000/api"
+API = "http://127.0.0.1:8003/api"
 
 st.set_page_config(
     page_title="OmniSearch AI – Upload",

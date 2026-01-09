@@ -220,10 +220,18 @@ import plotly.graph_objects as go
 import json
 from datetime import datetime
 from io import StringIO
-from sklearn.cluster import KMeans, DBSCAN
-from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering, SpectralClustering
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, RobustScaler
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from sklearn.ensemble import IsolationForest
+from sklearn.svm import OneClassSVM
+from sklearn.neighbors import LocalOutlierFactor, NearestNeighbors
+from sklearn.covariance import EllipticEnvelope
+from scipy.stats import zscore
+from scipy.spatial.distance import mahalanobis
 
-API = "http://127.0.0.1:8000/api"
+API = "http://127.0.0.1:8003/api"
 
 st.set_page_config(
     page_title="OmniSearch AI – Enterprise EDA",
@@ -272,6 +280,10 @@ with st.sidebar:
     st.markdown("---")
     export_html = st.button("🌐 Generate Executive HTML")
     export_pdf = st.button("📄 Generate Executive PDF")
+    st.markdown("---")
+    st.markdown("### ⚙️ Analysis Parameters")
+    sample_size = st.slider("Sample Size for Analysis", 1000, 50000, 10000, step=1000)
+    random_state = st.slider("Random State", 0, 100, 42)
 
 # =====================================================
 # BACKEND FETCHERS
@@ -322,7 +334,7 @@ def load_sample(ds, cols=None, n=20000):
 # =====================================================
 # LOAD / REFRESH EDA DATA
 # =====================================================
-if run_eda or st.session_state.eda is None:
+if run_eda:
     with st.spinner("🔬 Running Enterprise EDA…"):
         try:
             st.session_state.eda = fetch_eda(dataset_id)
@@ -338,212 +350,501 @@ etl = st.session_state.etl
 model_meta = st.session_state.model_meta
 
 if eda is None:
-    st.warning("EDA data not available. Click 'Run / Refresh EDA' to load.")
+    st.info("Click '🚀 Run / Refresh EDA' to start the EDA process.")
     st.stop()
 
 # =====================================================
-# EXECUTIVE KPI DASHBOARD
+# MAIN ANALYSIS TABS
 # =====================================================
-st.markdown("## 🎯 Executive KPI Dashboard")
-
-c1, c2, c3, c4, c5 = st.columns(5)
-c1.metric("Rows", f"{eda['rows']:,}")
-c2.metric("Columns", eda["columns"])
-c3.metric("Missing %", f"{eda['missing_pct']:.1f}%")
-c4.metric("Quality Score", f"{eda['quality_score']:.0f}/100")
-c5.metric("Source", "CLEAN" if eda.get("etl_complete") else "RAW")
-
-# =====================================================
-# BEFORE / AFTER COMPARISON
-# =====================================================
-st.markdown("## 🔄 RAW vs CLEAN Comparison")
-
-if etl:
-    raw = etl["comparison"]["raw_stats"]
-    clean = etl["comparison"]["clean_stats"]
-    quality = etl["comparison"]["quality"]
-
-    cmp = pd.DataFrame(
-        [
-            ["Rows", raw["rows"], clean["rows"]],
-            ["Missing Values", raw["missing_total"], clean["missing_total"]],
-            ["Duplicates", raw["duplicate_rows"], clean["duplicate_rows"]],
-            ["Quality Score", quality["before"], quality["after"]],
-        ],
-        columns=["Metric", "RAW", "CLEAN"],
-    )
-    st.dataframe(cmp, use_container_width=True)
-else:
-    st.info("ℹ️ ETL not run yet — run cleaning to see improvements.")
+tabs = st.tabs([
+    "📊 Overview",
+    "🧠 Clustering",
+    "📉 Dimensionality Reduction",
+    "🔍 Anomaly Detection",
+    "📦 Outlier Analysis",
+    "🔗 Feature Analysis",
+    "📥 Exports"
+])
 
 # =====================================================
-# MODEL INSIGHTS (SAFE)
+# TAB 1: OVERVIEW
 # =====================================================
-if model_meta and model_meta.get("status") == "ok":
-    st.markdown("## 🎯 Model-Driven Insights")
-    st.write(f"**Best Model:** {model_meta['best_model']} ({model_meta['best_score']:.3f})")
-    if "top_features" in model_meta:
-        st.write("**Top Impact Features:**", ", ".join(model_meta["top_features"]))
-else:
-    st.info("ℹ️ Train a model to unlock feature importance and prediction insights.")
+with tabs[0]:
+    st.markdown("## 🎯 Executive KPI Dashboard")
 
-# =====================================================
-# QUALITY GAUGE
-# =====================================================
-st.markdown("## ⚡ Data Quality Gauge")
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Rows", f"{eda['rows']:,}")
+    c2.metric("Columns", eda["columns"])
+    c3.metric("Missing %", f"{eda['missing_pct']:.1f}%")
+    c4.metric("Quality Score", f"{eda['quality_score']:.0f}/100")
+    c5.metric("Source", "CLEAN" if eda.get("etl_complete") else "RAW")
 
-fig = go.Figure(go.Indicator(
-    mode="gauge+number",
-    value=eda["quality_score"],
-    gauge={
-        "axis": {"range": [0, 100]},
-        "steps": [
-            {"range": [0, 70], "color": "red"},
-            {"range": [70, 90], "color": "orange"},
-            {"range": [90, 100], "color": "green"},
-        ],
-    },
-))
-st.plotly_chart(fig, use_container_width=True)
+    # RAW vs CLEAN Comparison
+    st.markdown("## 🔄 RAW vs CLEAN Comparison")
 
-# =====================================================
-# MISSING VALUE HEATMAP
-# =====================================================
-st.markdown("## 🚫 Missing Value Intelligence")
+    if etl:
+        raw = etl["comparison"]["raw_stats"]
+        clean = etl["comparison"]["clean_stats"]
+        quality = etl["comparison"]["quality"]
 
-missing_df = (
-    pd.DataFrame(eda["missing"].items(), columns=["Feature", "Missing"])
-    .assign(Percent=lambda x: x["Missing"] / eda["rows"] * 100)
-    .sort_values("Percent", ascending=False)
-)
-
-fig = px.bar(
-    missing_df.head(15),
-    x="Feature",
-    y="Percent",
-    color="Percent",
-    color_continuous_scale="Reds",
-)
-st.plotly_chart(fig, use_container_width=True)
-
-# =====================================================
-# BOXPLOTS + OUTLIERS
-# =====================================================
-st.markdown("## 📦 Outlier Analysis (Boxplots)")
-
-num_features = [
-    f for f, v in eda["summary"].items()
-    if v is not None and isinstance(v.get("mean"), (int, float))
-]
-
-if num_features:
-    feature = st.selectbox("Select numeric feature", num_features)
-    df_box = load_sample(dataset_id, [feature.lower()])
-
-    if df_box.empty or feature.lower() not in df_box.columns:
-        st.warning(f"Feature '{feature}' not available in current data source.")
-    else:
-        fig = px.box(
-            df_box,
-            y=feature.lower(),
-            points="outliers",
-            title=f"Boxplot – {feature}",
+        cmp = pd.DataFrame(
+            [
+                ["Rows", raw["rows"], clean["rows"]],
+                ["Missing Values", raw["missing_total"], clean["missing_total"]],
+                ["Duplicates", raw["duplicate_rows"], clean["duplicate_rows"]],
+                ["Quality Score", quality["before"], quality["after"]],
+            ],
+            columns=["Metric", "RAW", "CLEAN"],
         )
-        st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("No numeric features detected for boxplot analysis.")
+        st.dataframe(cmp, use_container_width=True)
+    else:
+        st.info("ℹ️ ETL not run yet — run cleaning to see improvements.")
 
-# =====================================================
-# CLUSTERING (UNSUPERVISED)
-# =====================================================
-st.markdown("## 🧠 Unsupervised Clustering (Outliers + Structure)")
+    # Model Insights
+    if model_meta and model_meta.get("status") == "ok":
+        st.markdown("## 🎯 Model-Driven Insights")
+        st.write(f"**Best Model:** {model_meta['best_model']} ({model_meta['best_score']:.3f})")
+        if "top_features" in model_meta:
+            st.write("**Top Impact Features:**", ", ".join(model_meta["top_features"]))
+    else:
+        st.info("ℹ️ Train a model to unlock feature importance and prediction insights.")
 
-if len(num_features) >= 2:
-    selected = st.multiselect(
-        "Select 2 features for clustering",
-        num_features,
-        default=num_features[:2],
-        max_selections=2,
+    # Quality Gauge
+    st.markdown("## ⚡ Data Quality Gauge")
+
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=eda["quality_score"],
+        gauge={
+            "axis": {"range": [0, 100]},
+            "steps": [
+                {"range": [0, 70], "color": "red"},
+                {"range": [70, 90], "color": "orange"},
+                {"range": [90, 100], "color": "green"},
+            ],
+        },
+    ))
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Missing Value Intelligence
+    st.markdown("## 🚫 Missing Value Intelligence")
+
+    missing_df = (
+        pd.DataFrame(eda["missing"].items(), columns=["Feature", "Missing"])
+        .assign(Percent=lambda x: x["Missing"] / eda["rows"] * 100)
+        .sort_values("Percent", ascending=False)
     )
 
-    if len(selected) == 2:
-        x_col, y_col = selected[0].lower(), selected[1].lower()
-        df_cluster = load_sample(dataset_id, [selected[0].lower(), selected[1].lower()])
+    fig = px.bar(
+        missing_df.head(15),
+        x="Feature",
+        y="Percent",
+        color="Percent",
+        color_continuous_scale="Reds",
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-        if df_cluster.empty or len(df_cluster.columns) < 2:
-            st.warning("Selected features not available in data.")
-        else:
-            X = StandardScaler().fit_transform(df_cluster[[x_col, y_col]])
+# =====================================================
+# TAB 2: CLUSTERING
+# =====================================================
+with tabs[1]:
+    st.markdown("## 🧠 Unsupervised Clustering")
 
-            algo = st.radio("Clustering Algorithm", ["KMeans", "DBSCAN"], horizontal=True)
+    num_features = [
+        f for f, v in eda["summary"].items()
+        if v is not None and isinstance(v.get("mean"), (int, float))
+    ]
 
-            if algo == "KMeans":
-                k = st.slider("Clusters (k)", 2, 8, 3)
-                labels = KMeans(n_clusters=k, random_state=42).fit_predict(X)
+    if len(num_features) >= 2:
+        selected = st.multiselect(
+            "Select features for clustering (2-5 recommended)",
+            num_features,
+            default=num_features[: min(3, len(num_features))],
+            max_selections=5,
+        )
+
+        if len(selected) >= 2:
+            df_cluster = load_sample(dataset_id, [f.lower() for f in selected], sample_size)
+
+            if df_cluster.empty:
+                st.warning("Selected features not available in data.")
             else:
-                eps = st.slider("EPS", 0.1, 2.0, 0.8, 0.1)
-                min_samples = st.slider("Min Samples", 5, 50, 10)
-                labels = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(X)
+                # Preprocessing
+                scaler_option = st.selectbox("Scaler", ["Standard", "MinMax", "Robust"], index=0)
+                scaler = {"Standard": StandardScaler(), "MinMax": MinMaxScaler(), "Robust": RobustScaler()}[scaler_option]
+                X_scaled = scaler.fit_transform(df_cluster)
 
-            df_cluster["cluster"] = labels
+                algo = st.selectbox("Clustering Algorithm", ["KMeans", "DBSCAN", "Agglomerative", "Spectral"])
 
-            fig = px.scatter(
-                df_cluster,
-                x=x_col,
-                y=y_col,
-                color="cluster",
-                title=f"{algo} Clustering ({selected[0]} vs {selected[1]})",
-                color_continuous_scale="Viridis" if algo == "DBSCAN" else None,
+                if algo == "KMeans":
+                    n_clusters = st.slider("Number of Clusters", 2, 10, 3)
+                    model = KMeans(n_clusters=n_clusters, random_state=random_state)
+                elif algo == "DBSCAN":
+                    eps = st.slider("Epsilon", 0.1, 2.0, 0.5, 0.1)
+                    min_samples = st.slider("Min Samples", 5, 20, 5)
+                    model = DBSCAN(eps=eps, min_samples=min_samples)
+                elif algo == "Agglomerative":
+                    n_clusters = st.slider("Number of Clusters", 2, 10, 3)
+                    linkage = st.selectbox("Linkage", ["ward", "complete", "average", "single"])
+                    model = AgglomerativeClustering(n_clusters=n_clusters, linkage=linkage)
+                elif algo == "Spectral":
+                    n_clusters = st.slider("Number of Clusters", 2, 10, 3)
+                    model = SpectralClustering(n_clusters=n_clusters, random_state=random_state)
+
+                if st.button("Run Clustering"):
+                    with st.spinner("Clustering..."):
+                        labels = model.fit_predict(X_scaled)
+                        df_cluster["cluster"] = labels
+
+                        # Visualization (2D projection if >2 features)
+                        if len(selected) == 2:
+                            fig = px.scatter(
+                                df_cluster,
+                                x=selected[0].lower(),
+                                y=selected[1].lower(),
+                                color="cluster",
+                                title=f"{algo} Clustering",
+                            )
+                        else:
+                            # PCA for 2D projection
+                            pca = PCA(n_components=2, random_state=random_state)
+                            X_pca = pca.fit_transform(X_scaled)
+                            df_pca = pd.DataFrame(X_pca, columns=["PC1", "PC2"])
+                            df_pca["cluster"] = labels
+                            fig = px.scatter(
+                                df_pca,
+                                x="PC1",
+                                y="PC2",
+                                color="cluster",
+                                title=f"{algo} Clustering (PCA Projection)",
+                            )
+                        st.plotly_chart(fig, use_container_width=True)
+
+                        # Cluster summary
+                        cluster_summary = df_cluster.groupby("cluster").agg({
+                            col.lower(): ["mean", "std", "count"] for col in selected
+                        }).round(2)
+                        st.dataframe(cluster_summary)
+    else:
+        st.info("Need at least 2 numeric features for clustering.")
+
+# =====================================================
+# TAB 3: DIMENSIONALITY REDUCTION
+# =====================================================
+with tabs[2]:
+    st.markdown("## 📉 Dimensionality Reduction")
+
+    num_features = [
+        f for f, v in eda["summary"].items()
+        if v is not None and isinstance(v.get("mean"), (int, float))
+    ]
+
+    if len(num_features) >= 2:
+        selected = st.multiselect(
+            "Select features for reduction",
+            num_features,
+            default=num_features[: min(5, len(num_features))],
+            max_selections=10,
+        )
+
+        if len(selected) >= 2:
+            df_dr = load_sample(dataset_id, [f.lower() for f in selected], sample_size)
+
+            if df_dr.empty:
+                st.warning("Selected features not available.")
+            else:
+                scaler = StandardScaler()
+                X_scaled = scaler.fit_transform(df_dr)
+
+                method = st.selectbox("Reduction Method", ["PCA", "t-SNE"])
+
+                if method == "PCA":
+                    n_components = st.slider("Components", 2, min(5, len(selected)), 2)
+                    model = PCA(n_components=n_components, random_state=random_state)
+                    X_reduced = model.fit_transform(X_scaled)
+                    explained_var = model.explained_variance_ratio_
+                    st.write(f"Explained Variance: {explained_var}")
+                    fig = px.scatter(
+                        x=X_reduced[:, 0],
+                        y=X_reduced[:, 1],
+                        title="PCA Projection",
+                        labels={"x": "PC1", "y": "PC2"}
+                    )
+                elif method == "t-SNE":
+                    perplexity = st.slider("Perplexity", 5, 50, 30)
+                    model = TSNE(n_components=2, perplexity=perplexity, random_state=random_state)
+                    X_reduced = model.fit_transform(X_scaled)
+                    fig = px.scatter(
+                        x=X_reduced[:, 0],
+                        y=X_reduced[:, 1],
+                        title="t-SNE Projection",
+                        labels={"x": "Dim1", "y": "Dim2"}
+                    )
+
+                st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Need at least 2 numeric features.")
+
+# =====================================================
+# TAB 4: ANOMALY DETECTION
+# =====================================================
+with tabs[3]:
+    st.markdown("## 🔍 Anomaly Detection")
+
+    num_features = [
+        f for f, v in eda["summary"].items()
+        if v is not None and isinstance(v.get("mean"), (int, float))
+    ]
+
+    if num_features:
+        selected = st.multiselect(
+            "Select features for anomaly detection",
+            num_features,
+            default=num_features[: min(3, len(num_features))],
+            max_selections=5,
+        )
+
+        if selected:
+            df_anom = load_sample(dataset_id, [f.lower() for f in selected], sample_size)
+
+            if df_anom.empty:
+                st.warning("Selected features not available.")
+            else:
+                scaler = StandardScaler()
+                X_scaled = scaler.fit_transform(df_anom)
+
+                method = st.selectbox("Anomaly Method", ["Isolation Forest", "One-Class SVM", "Local Outlier Factor"])
+
+                if method == "Isolation Forest":
+                    contamination = st.slider("Contamination", 0.01, 0.5, 0.1, 0.01)
+                    model = IsolationForest(contamination=contamination, random_state=random_state)
+                elif method == "One-Class SVM":
+                    nu = st.slider("Nu", 0.01, 0.5, 0.1, 0.01)
+                    model = OneClassSVM(nu=nu)
+                elif method == "Local Outlier Factor":
+                    n_neighbors = st.slider("Neighbors", 5, 50, 20)
+                    contamination = st.slider("Contamination", 0.01, 0.5, 0.1, 0.01)
+                    model = LocalOutlierFactor(n_neighbors=n_neighbors, contamination=contamination)
+
+                if st.button("Detect Anomalies"):
+                    with st.spinner("Detecting anomalies..."):
+                        if method == "Local Outlier Factor":
+                            labels = model.fit_predict(X_scaled)
+                        else:
+                            labels = model.fit_predict(X_scaled)
+
+                        df_anom["anomaly"] = labels
+                        anomaly_count = (labels == -1).sum()
+                        st.metric("Anomalies Detected", anomaly_count)
+
+                        if len(selected) == 2:
+                            fig = px.scatter(
+                                df_anom,
+                                x=selected[0].lower(),
+                                y=selected[1].lower(),
+                                color="anomaly",
+                                title=f"Anomaly Detection ({method})",
+                                color_discrete_map={1: "blue", -1: "red"}
+                            )
+                        else:
+                            pca = PCA(n_components=2, random_state=random_state)
+                            X_pca = pca.fit_transform(X_scaled)
+                            df_pca = pd.DataFrame(X_pca, columns=["PC1", "PC2"])
+                            df_pca["anomaly"] = labels
+                            fig = px.scatter(
+                                df_pca,
+                                x="PC1",
+                                y="PC2",
+                                color="anomaly",
+                                title=f"Anomaly Detection ({method}) - PCA Projection",
+                                color_discrete_map={1: "blue", -1: "red"}
+                            )
+                        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("No numeric features available.")
+
+# =====================================================
+# TAB 5: OUTLIER ANALYSIS
+# =====================================================
+with tabs[4]:
+    st.markdown("## 📦 Outlier Analysis")
+
+    num_features = [
+        f for f, v in eda["summary"].items()
+        if v is not None and isinstance(v.get("mean"), (int, float))
+    ]
+
+    if num_features:
+        feature = st.selectbox("Select numeric feature", num_features)
+        method = st.selectbox("Outlier Method", ["Boxplot", "Z-Score", "IQR", "Mahalanobis"])
+
+        df_out = load_sample(dataset_id, [feature.lower()], sample_size)
+
+        if df_out.empty or feature.lower() not in df_out.columns:
+            st.warning(f"Feature '{feature}' not available.")
+        else:
+            data = df_out[feature.lower()].dropna()
+
+            if method == "Boxplot":
+                fig = px.box(
+                    df_out,
+                    y=feature.lower(),
+                    points="outliers",
+                    title=f"Boxplot – {feature}",
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            elif method == "Z-Score":
+                threshold = st.slider("Z-Score Threshold", 1.0, 5.0, 3.0, 0.1)
+                z_scores = zscore(data)
+                outliers = np.abs(z_scores) > threshold
+                st.metric("Outliers Detected", outliers.sum())
+                fig = px.histogram(
+                    x=data,
+                    title=f"Z-Score Outliers – {feature}",
+                    color=outliers,
+                    color_discrete_map={False: "blue", True: "red"}
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            elif method == "IQR":
+                Q1 = data.quantile(0.25)
+                Q3 = data.quantile(0.75)
+                IQR = Q3 - Q1
+                lower_bound = Q1 - 1.5 * IQR
+                upper_bound = Q3 + 1.5 * IQR
+                outliers = (data < lower_bound) | (data > upper_bound)
+                st.metric("Outliers Detected", outliers.sum())
+                fig = px.box(
+                    y=data,
+                    title=f"IQR Outliers – {feature}",
+                    points="all"
+                )
+                st.plotly_chart(fig, use_container_width=True)
+
+            elif method == "Mahalanobis":
+                if len(num_features) >= 2:
+                    selected_multi = st.multiselect(
+                        "Select additional features for Mahalanobis",
+                        [f for f in num_features if f != feature],
+                        default=num_features[:1] if len(num_features) > 1 else [],
+                        max_selections=4
+                    )
+                    if selected_multi:
+                        df_maha = load_sample(dataset_id, [f.lower() for f in [feature] + selected_multi], sample_size)
+                        X = df_maha.dropna().values
+                        mean = np.mean(X, axis=0)
+                        cov = np.cov(X.T)
+                        inv_cov = np.linalg.inv(cov)
+                        mahal_dist = [mahalanobis(x, mean, inv_cov) for x in X]
+                        threshold = st.slider("Mahalanobis Threshold", 1.0, 10.0, 3.0, 0.1)
+                        outliers = np.array(mahal_dist) > threshold
+                        st.metric("Outliers Detected", outliers.sum())
+                        fig = px.scatter(
+                            x=X[:, 0],
+                            y=X[:, 1] if X.shape[1] > 1 else mahal_dist,
+                            color=outliers,
+                            title=f"Mahalanobis Outliers – {feature}",
+                            color_discrete_map={False: "blue", True: "red"}
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.info("Select additional features.")
+                else:
+                    st.info("Need more features for Mahalanobis.")
+    else:
+        st.info("No numeric features.")
+
+# =====================================================
+# TAB 6: FEATURE ANALYSIS
+# =====================================================
+with tabs[5]:
+    st.markdown("## 🔗 Feature Analysis")
+
+    df_feat = load_sample(dataset_id, None, sample_size)
+
+    if not df_feat.empty:
+        numeric_cols = df_feat.select_dtypes(include=[np.number]).columns.tolist()
+
+        if len(numeric_cols) >= 2:
+            corr = df_feat[numeric_cols].corr()
+            fig = px.imshow(
+                corr,
+                text_auto=True,
+                title="Correlation Matrix",
+                color_continuous_scale="RdBu_r"
             )
             st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("Need at least 2 numeric features for clustering.")
+
+            # Feature distributions
+            feature_dist = st.selectbox("Select feature for distribution", numeric_cols)
+            fig_dist = px.histogram(
+                df_feat,
+                x=feature_dist,
+                title=f"Distribution of {feature_dist}"
+            )
+            st.plotly_chart(fig_dist, use_container_width=True)
+
+            # Scatter plot
+            x_feat = st.selectbox("X-axis", numeric_cols, index=0)
+            y_feat = st.selectbox("Y-axis", numeric_cols, index=1 if len(numeric_cols) > 1 else 0)
+            fig_scatter = px.scatter(
+                df_feat,
+                x=x_feat,
+                y=y_feat,
+                title=f"{x_feat} vs {y_feat}"
+            )
+            st.plotly_chart(fig_scatter, use_container_width=True)
+        else:
+            st.info("Need at least 2 numeric features for correlation.")
+    else:
+        st.warning("No data available.")
 
 # =====================================================
-# EXECUTIVE EXPORTS
-# =====================================================
-st.markdown("## 📥 Executive Reports")
+# TAB 7: EXPORTS
+with tabs[6]:
+    st.markdown("## 📥 Executive Reports")
 
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-json_report = json.dumps(
-    {
-        "eda": eda,
-        "etl": etl or "Not run",
-        "model": model_meta or "Not trained",
-        "generated_at": datetime.now().isoformat(),
-    },
-    indent=2,
-    default=str,
-)
-
-if export_html:
-    html = f"""
-    <!DOCTYPE html>
-    <html><body><h1>Enterprise EDA Report – {dataset_id}</h1>
-    <pre>{json_report}</pre>
-    </body></html>
-    """
-    st.download_button(
-        "Download HTML Report",
-        html,
-        f"EDA_Report_{dataset_id}_{timestamp}.html",
-        "text/html",
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+    json_report = json.dumps(
+        {
+            "eda": eda,
+            "etl": etl or "Not run",
+            "model": model_meta or "Not trained",
+            "generated_at": datetime.now().isoformat(),
+        },
+        indent=2,
+        default=str,
     )
 
-if export_pdf:
-    st.info("PDF export requires server-side rendering (e.g., WeasyPrint). Source provided.")
+    if export_html:
+        html = f"""
+        <!DOCTYPE html>
+        <html><body><h1>Enterprise EDA Report – {dataset_id}</h1>
+        <pre>{json_report}</pre>
+        </body></html>
+        """
+        st.download_button(
+            "Download HTML Report",
+            html,
+            f"EDA_Report_{dataset_id}_{timestamp}.html",
+            "text/html",
+        )
+
+    if export_pdf:
+        st.info("PDF export requires server-side rendering (e.g., WeasyPrint). Source provided.")
+        st.download_button(
+            "Download JSON (for PDF conversion)",
+            json_report,
+            f"EDA_Report_{dataset_id}_{timestamp}.json",
+            "application/json",
+        )
+
     st.download_button(
-        "Download JSON (for PDF conversion)",
+        "Download Full JSON Report",
         json_report,
         f"EDA_Report_{dataset_id}_{timestamp}.json",
         "application/json",
     )
-
-st.download_button(
-    "Download Full JSON Report",
-    json_report,
-    f"EDA_Report_{dataset_id}_{timestamp}.json",
-    "application/json",
-)
 
 st.caption("Enterprise EDA • Unsupervised Intelligence • Audit-Ready • Null-Safe")
