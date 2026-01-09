@@ -15,3 +15,11 @@ data/
 # OS
 Thumbs.db
 .DS_Store
+
+data/
+models/
+*.csv
+*.pkl
+*.joblib
+.venv/
+__pycache__/
