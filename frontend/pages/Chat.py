@@ -375,151 +375,37 @@ if submit_button and user_input.strip():
 # =====================================================
 def process_chat_query(question, dataset_id):
     """
-    Enhanced chat processing with multiple data sources and response types
+    Industrial-level chat processing with comprehensive AI understanding
     """
-    question_lower = question.lower()
-
-    # Get available data
     try:
-        # Fetch model metadata
-        meta_resp = requests.get(f"{API}/meta/{dataset_id}", timeout=5)
-        model_meta = meta_resp.json() if meta_resp.status_code == 200 else {}
-
-        # Fetch EDA data
-        eda_resp = requests.get(f"{API}/eda/{dataset_id}", timeout=5)
-        eda_data = eda_resp.json() if eda_resp.status_code == 200 else {}
-
-        # Fetch dataset info
-        info_resp = requests.get(f"{API}/datasets/{dataset_id}/info", timeout=5)
-        dataset_info = info_resp.json() if info_resp.status_code == 200 else {}
-
+        payload = {
+            "question": question,
+            "history": st.session_state.get('chat_history', [])[-10:]  # Last 10 messages for context
+        }
+        resp = requests.post(f"{API}/chat/{dataset_id}", json=payload, timeout=60)  # Increased timeout
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("status") == "ok":
+                return {
+                    'text_response': data.get("answer", "No answer generated"),
+                    'structured_data': data.get("structured_data"),
+                    'context_used': data.get("context_used", [])
+                }
+            else:
+                return {
+                    'text_response': f"Error: {data.get('message', 'Unknown error')}",
+                    'structured_data': None
+                }
+        else:
+            return {
+                'text_response': f"Backend error: {resp.status_code} - {resp.text}",
+                'structured_data': None
+            }
     except Exception as e:
         return {
-            'text_response': f"I couldn't access the data right now. Error: {str(e)}",
+            'text_response': f"Connection error: {str(e)}",
             'structured_data': None
         }
-
-    # Process different types of questions
-    response_data = {'text_response': '', 'structured_data': None}
-
-    # Model performance questions
-    if any(word in question_lower for word in ['accuracy', 'score', 'performance', 'how good', 'evaluate']):
-        if model_meta:
-            best_score = model_meta.get('best_score', 0)
-            best_model = model_meta.get('best_model', 'Unknown')
-            task = model_meta.get('task', 'Unknown')
-
-            response_data['text_response'] = f"Your best model is **{best_model}** with a score of **{best_score:.4f}** for the **{task}** task."
-
-            # Add leaderboard as structured data
-            if 'leaderboard' in model_meta:
-                response_data['structured_data'] = {
-                    'type': 'dataframe',
-                    'data': pd.DataFrame(model_meta['leaderboard'])
-                }
-        else:
-            response_data['text_response'] = "You haven't trained any models yet. Go to the Train page to build your ML models!"
-
-    # Feature importance questions
-    elif any(word in question_lower for word in ['feature', 'important', 'variable', 'column']):
-        if model_meta and 'top_features' in model_meta:
-            top_features = model_meta['top_features'][:5]
-            response_data['text_response'] = f"The top features for your model are: {', '.join(top_features)}"
-
-            # Add feature importance as structured data if available
-            if 'feature_importance' in model_meta:
-                features_df = pd.DataFrame(list(model_meta['feature_importance'].items())[:10],
-                                         columns=['Feature', 'Importance'])
-                response_data['structured_data'] = {
-                    'type': 'dataframe',
-                    'data': features_df
-                }
-        else:
-            response_data['text_response'] = "Feature importance data isn't available yet. Train a model first!"
-
-    # Data quality questions
-    elif any(word in question_lower for word in ['missing', 'null', 'quality', 'clean']):
-        if eda_data:
-            missing_values = eda_data.get('missing', {})
-            total_missing = sum(missing_values.values())
-            total_rows = dataset_info.get('rows', 0)
-
-            if total_missing > 0:
-                missing_rate = (total_missing / (total_rows * len(missing_values))) * 100
-                response_data['text_response'] = f"Your dataset has {total_missing:,} missing values ({missing_rate:.1f}% of total data)."
-
-                # Show missing values breakdown
-                missing_df = pd.DataFrame(list(missing_values.items()), columns=['Column', 'Missing Count'])
-                missing_df = missing_df[missing_df['Missing Count'] > 0].sort_values('Missing Count', ascending=False)
-                response_data['structured_data'] = {
-                    'type': 'dataframe',
-                    'data': missing_df
-                }
-            else:
-                response_data['text_response'] = "🎉 Great news! Your dataset has no missing values."
-        else:
-            response_data['text_response'] = "Run EDA analysis first to check data quality!"
-
-    # Dataset overview questions
-    elif any(word in question_lower for word in ['dataset', 'data', 'size', 'shape', 'overview']):
-        if dataset_info:
-            rows = dataset_info.get('rows', 0)
-            cols = dataset_info.get('columns', 0)
-            response_data['text_response'] = f"Your dataset has {rows:,} rows and {cols} columns."
-
-            # Add data types as structured data
-            if eda_data and 'dtypes' in eda_data:
-                dtypes_df = pd.DataFrame(list(eda_data['dtypes'].items()), columns=['Column', 'Data Type'])
-                response_data['structured_data'] = {
-                    'type': 'dataframe',
-                    'data': dtypes_df
-                }
-        else:
-            response_data['text_response'] = "I couldn't access dataset information right now."
-
-    # Model comparison questions
-    elif any(word in question_lower for word in ['compare', 'comparison', 'versus', 'vs']):
-        if model_meta and 'leaderboard' in model_meta:
-            leaderboard = model_meta['leaderboard']
-            if len(leaderboard) > 1:
-                best = max(leaderboard, key=lambda x: x['score'])
-                worst = min(leaderboard, key=lambda x: x['score'])
-
-                response_data['text_response'] = f"Comparing your models: **{best['model']}** performs best ({best['score']:.4f}) while **{worst['model']}** has the lowest score ({worst['score']:.4f})."
-
-                response_data['structured_data'] = {
-                    'type': 'dataframe',
-                    'data': pd.DataFrame(leaderboard).sort_values('score', ascending=False)
-                }
-            else:
-                response_data['text_response'] = "You only have one trained model. Train more models for comparison!"
-        else:
-            response_data['text_response'] = "No models to compare. Train some models first!"
-
-    # Prediction questions
-    elif any(word in question_lower for word in ['predict', 'forecast', 'estimate']):
-        if model_meta:
-            response_data['text_response'] = "You can make predictions using your trained model! Go to the Predict page to input new data and get predictions."
-        else:
-            response_data['text_response'] = "Train a model first before making predictions!"
-
-    # Task type questions
-    elif any(word in question_lower for word in ['task', 'type', 'classification', 'regression']):
-        if model_meta and 'task' in model_meta:
-            task = model_meta['task']
-            response_data['text_response'] = f"This is a **{task}** task. "
-            if task == 'classification':
-                response_data['text_response'] += "You're predicting categories or classes."
-            else:
-                response_data['text_response'] += "You're predicting continuous numerical values."
-        else:
-            response_data['text_response'] = "Run model training to determine the task type!"
-
-    # Default response
-    else:
-        response_data['text_response'] = f"I understand you're asking about: '{question}'. I'm designed to help with questions about your data, model performance, features, and predictions. Try asking something like 'What's the model accuracy?' or 'Show me the top features!'"
-
-    return response_data
 
 # =====================================================
 # FOOTER

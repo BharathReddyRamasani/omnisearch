@@ -189,10 +189,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 uploaded_file = st.file_uploader(
-    "",
+    "Upload CSV file",
     type=["csv"],
     help="Select a CSV file to upload",
-    label_visibility="collapsed"
+    label_visibility="hidden"
 )
 
 # =====================================================
@@ -207,7 +207,7 @@ if uploaded_file is not None:
         </div>
         """, unsafe_allow_html=True)
         
-        with st.spinner(""):
+        with st.spinner("Processing dataset..."):
             resp = requests.post(
                 f"{API}/upload",
                 files={"file": uploaded_file}
