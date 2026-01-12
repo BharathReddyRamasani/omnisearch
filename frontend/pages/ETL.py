@@ -245,16 +245,30 @@ with etl_tabs[2]:
 
     r = requests.get(f"{API}/datasets/{dataset_id}/comparison")
     if r.status_code == 200:
-        comp = r.json()
+        data = r.json()
+        
+        # Handle both wrapped and unwrapped response structures
+        if "comparison" in data:
+            comp = data["comparison"]
+        else:
+            comp = data
+        
+        # Check if we have the required keys
+        if comp and "raw_stats" in comp and "clean_stats" in comp and "improvements" in comp:
+            raw_stats = comp.get("raw_stats", {})
+            clean_stats = comp.get("clean_stats", {})
+            improvements = comp.get("improvements", {})
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Rows", raw_stats.get("rows", 0), clean_stats.get("rows", 0) - raw_stats.get("rows", 0))
+            c2.metric("Missing Filled", improvements.get("missing_values_filled", 0))
+            c3.metric("Duplicates Removed", improvements.get("duplicates_removed", 0))
+            c4.metric("Outliers Fixed", improvements.get("outliers_fixed", 0))
 
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Rows", comp["raw_stats"]["rows"], comp["clean_stats"]["rows"] - comp["raw_stats"]["rows"])
-        c2.metric("Missing Filled", comp["improvements"]["missing_values_filled"])
-        c3.metric("Duplicates Removed", comp["improvements"]["duplicates_removed"])
-        c4.metric("Outliers Fixed", comp["improvements"].get("outliers_fixed", 0))
-
-        st.markdown("### Detailed ETL Intelligence")
-        st.json(comp)
+            st.markdown("### Detailed ETL Intelligence")
+            st.json(comp)
+        else:
+            st.info("Run ETL to generate comparison report")
     else:
         st.info("Run ETL to generate comparison report")
 

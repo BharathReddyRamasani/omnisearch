@@ -161,48 +161,109 @@ with tab_training:
             
             with st.spinner("🔬 Training industrial ML models..."):
                 try:
-                    status_text.text("Initializing training pipeline...")
-                    progress_bar.progress(10)
+                    status_text.text("Submitting training job...")
+                    progress_bar.progress(5)
                     
                     start_time = time.time()
+                    
+                    # Submit training job (async)
                     resp = requests.post(
                         f"{API}/train/{dataset_id}",
                         json=payload,
-                        timeout=600  # 10 minutes
+                        timeout=30
                     )
-                    
-                    progress_bar.progress(90)
-                    status_text.text("Finalizing results...")
                     
                     if resp.status_code != 200:
                         st.error(f"Backend error: {resp.status_code}")
                         st.json(resp.json() if resp.content else resp.text)
                         st.stop()
                     
-                    result = resp.json()
+                    job_response = resp.json()
                     
-                    if result.get("status") != "ok":
-                        st.error("Training failed")
-                        st.json(result)
+                    if job_response.get("status") != "accepted":
+                        st.error("Failed to submit training job")
+                        st.json(job_response)
                         st.stop()
                     
-                    # Store results
-                    st.session_state.model_meta = result
-                    st.session_state.training_time = time.time() - start_time
+                    job_id = job_response.get("job_id")
+                    st.info(f"📋 Training job submitted: {job_id}")
+                    st.info("Polling job status... (this may take a few minutes)")
                     
-                    progress_bar.progress(100)
-                    status_text.text("✅ Training completed successfully!")
+                    progress_bar.progress(10)
                     
-                    st.success(f"🏆 Training completed in {st.session_state.training_time:.1f}s")
-                    st.balloons()
+                    # Poll job status
+                    max_polls = 600  # 10 minutes with 1-second intervals
+                    poll_count = 0
                     
-                    # Auto-switch to results tab
-                    st.rerun()
+                    while poll_count < max_polls:
+                        try:
+                            job_resp = requests.get(f"{API}/jobs/{job_id}", timeout=10)
+                            
+                            if job_resp.status_code != 200:
+                                st.warning(f"Could not fetch job status: {job_resp.status_code}")
+                                time.sleep(1)
+                                poll_count += 1
+                                continue
+                            
+                            job_data = job_resp.json()
+                            job_status = job_data.get("status")
+                            job_progress = job_data.get("progress", poll_count // 6)
+                            job_message = job_data.get("message", "Training...")
+                            
+                            status_text.text(f"Status: {job_message}")
+                            progress_bar.progress(min(99, 10 + (job_progress // 2)))
+                            
+                            if job_status == "completed":
+                                result = job_data.get("result")
+                                
+                                if result and result.get("status") == "ok":
+                                    # Store results
+                                    st.session_state.model_meta = result
+                                    st.session_state.training_time = time.time() - start_time
+                                    
+                                    progress_bar.progress(100)
+                                    status_text.text("✅ Training completed successfully!")
+                                    
+                                    st.success(f"🏆 Training completed in {st.session_state.training_time:.1f}s")
+                                    st.balloons()
+                                    
+                                    # Auto-switch to results tab
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error("Training completed but returned error status")
+                                    st.json(result)
+                                    st.stop()
+                                break
+                            
+                            elif job_status == "failed":
+                                st.error(f"Training failed: {job_data.get('message', 'Unknown error')}")
+                                if job_data.get("error"):
+                                    st.error(f"Error details: {job_data.get('error')}")
+                                st.stop()
+                                break
+                            
+                            # Job still running
+                            time.sleep(1)
+                            poll_count += 1
+                        
+                        except requests.exceptions.Timeout:
+                            st.warning("Job status request timed out, retrying...")
+                            time.sleep(2)
+                            poll_count += 2
+                            continue
+                    
+                    if poll_count >= max_polls:
+                        st.error("⏰ Training timed out (10min). The job may still be running in background.")
+                        st.info(f"Check status later with job ID: {job_id}")
+                        st.stop()
                     
                 except requests.exceptions.Timeout:
-                    st.error("⏰ Training timed out (10min). Try smaller dataset or fewer models.")
+                    st.error("⏰ Request timed out. The job may be running in background.")
                 except Exception as e:
                     st.error(f"Connection error: {str(e)}")
+                    import traceback
+                    st.error(traceback.format_exc())
                 finally:
                     progress_bar.empty()
                     status_text.empty()

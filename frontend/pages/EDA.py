@@ -382,21 +382,25 @@ with tabs[0]:
     # RAW vs CLEAN Comparison
     st.markdown("## 🔄 RAW vs CLEAN Comparison")
 
-    if etl:
-        raw = etl["comparison"]["raw_stats"]
-        clean = etl["comparison"]["clean_stats"]
-        quality = etl["comparison"]["quality"]
+    if etl and "comparison" in etl:
+        comp = etl["comparison"]
+        if comp and "raw_stats" in comp and "clean_stats" in comp:
+            raw = comp["raw_stats"]
+            clean = comp["clean_stats"]
+            quality = comp.get("quality", {})
 
-        cmp = pd.DataFrame(
-            [
-                ["Rows", raw["rows"], clean["rows"]],
-                ["Missing Values", raw["missing_total"], clean["missing_total"]],
-                ["Duplicates", raw["duplicate_rows"], clean["duplicate_rows"]],
-                ["Quality Score", quality["before"], quality["after"]],
-            ],
-            columns=["Metric", "RAW", "CLEAN"],
-        )
-        st.dataframe(cmp, use_container_width=True)
+            cmp = pd.DataFrame(
+                [
+                    ["Rows", raw.get("rows", 0), clean.get("rows", 0)],
+                    ["Missing Values", raw.get("missing_total", 0), clean.get("missing_total", 0)],
+                    ["Duplicates", raw.get("duplicate_rows", 0), clean.get("duplicate_rows", 0)],
+                    ["Quality Score", quality.get("before", 0), quality.get("after", 0)],
+                ],
+                columns=["Metric", "RAW", "CLEAN"],
+            )
+            st.dataframe(cmp, use_container_width=True)
+        else:
+            st.info("ℹ️ ETL not run yet — run cleaning to see improvements.")
     else:
         st.info("ℹ️ ETL not run yet — run cleaning to see improvements.")
 
@@ -469,6 +473,12 @@ with tabs[1]:
             if df_cluster.empty:
                 st.warning("Selected features not available in data.")
             else:
+                # ⚠️ HANDLE NaN BEFORE SCALING - CRITICAL FOR SKLEARN
+                df_cluster = df_cluster.dropna()
+                if df_cluster.empty:
+                    st.error("All rows contain missing values. Cannot proceed.")
+                    st.stop()
+
                 # Preprocessing
                 scaler_option = st.selectbox("Scaler", ["Standard", "MinMax", "Robust"], index=0)
                 scaler = {"Standard": StandardScaler(), "MinMax": MinMaxScaler(), "Robust": RobustScaler()}[scaler_option]
@@ -553,6 +563,12 @@ with tabs[2]:
             if df_dr.empty:
                 st.warning("Selected features not available.")
             else:
+                # ⚠️ HANDLE NaN BEFORE SCALING - CRITICAL FOR SKLEARN
+                df_dr = df_dr.dropna()
+                if df_dr.empty:
+                    st.error("All rows contain missing values. Cannot proceed.")
+                    st.stop()
+
                 scaler = StandardScaler()
                 X_scaled = scaler.fit_transform(df_dr)
 

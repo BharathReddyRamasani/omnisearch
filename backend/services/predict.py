@@ -346,9 +346,11 @@ import joblib
 import pandas as pd
 import numpy as np
 import hashlib
+import json
 from fastapi import HTTPException
 
 from backend.services.utils import model_dir, load_meta, load_raw, load_clean
+from typing import Dict
 
 
 # =====================================================
@@ -372,34 +374,39 @@ def _autofill(col, user_value, defaults):
 # MAIN PREDICTION LOGIC
 # =====================================================
 def make_prediction(dataset_id: str, payload: dict):
-    model_path = os.path.join(model_dir(dataset_id), "model.pkl")
-    if not os.path.exists(model_path):
-        raise HTTPException(404, "Model not trained")
+    from backend.services.model_registry import ModelRegistry
+    from backend.services.training import detect_dataset_drift
+    
+    # Get active model info from registry
+    active_version = ModelRegistry.get_active_version(dataset_id)
+    if not active_version:
+        raise HTTPException(status_code=404, detail="No active model found for this dataset")
 
+    model_path = active_version["model_path"]
+    if not os.path.exists(model_path):
+        raise HTTPException(status_code=404, detail="Model file not found")
+
+    meta = active_version["metadata"]
     model = joblib.load(model_path)
-    meta = load_meta(dataset_id)
 
     # -------------------------------------------------
     # VALIDATE DATASET CONSISTENCY (ENTERPRISE SAFETY)
     # -------------------------------------------------
-    data_source = meta.get("data_source", "raw")  # backward compat if old meta
-
     try:
-        if data_source == "clean":
-            df_current = load_clean(dataset_id)
-        else:
-            df_current = load_raw(dataset_id)
-    except Exception:
-        # Fallback to raw if clean fails — but still hash what's available
         df_current = load_raw(dataset_id)
+    except Exception:
+        raise HTTPException(404, "Cannot load current dataset")
 
-    current_hash = dataset_hash(df_current)
-
-    if current_hash != meta["dataset_hash"]:
-        raise HTTPException(
-            status_code=409,
-            detail="Dataset has changed since model training. Retrain required."
-        )
+    # Use the new drift detection
+    drift_check = detect_dataset_drift(dataset_id, df_current)
+    if drift_check["drift_detected"]:
+        # Return error response with drift details
+        return {
+            "status": "error",
+            "error": "Dataset has changed since model training",
+            "drift_details": drift_check,
+            "recommendation": "Please retrain the model with the current dataset"
+        }
 
     # -------------------------------------------------
     # FEATURE HANDLING
@@ -436,7 +443,7 @@ def make_prediction(dataset_id: str, payload: dict):
     try:
         pred = model.predict(X)[0]
     except Exception as e:
-        raise HTTPException(400, f"Prediction failed: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Prediction failed: {str(e)}")
 
     confidence = None
     model_step = model.named_steps.get("model")
@@ -454,4 +461,117 @@ def make_prediction(dataset_id: str, payload: dict):
         "mode": mode_label,           # ← external: "guided" or "full"
         "used_features": used_features,
         "auto_filled": auto_filled,
+    }
+
+
+# =====================================================
+# BATCH PREDICTION
+# =====================================================
+def make_batch_prediction(dataset_id: str, csv_content: bytes) -> Dict:
+    """Make predictions on a batch of data from CSV"""
+    from backend.services.model_registry import ModelRegistry
+    from backend.services.training import detect_dataset_drift
+    import io
+    
+    # Get active model info from registry
+    active_version = ModelRegistry.get_active_version(dataset_id)
+    if not active_version:
+        raise HTTPException(status_code=404, detail="No active model found for this dataset")
+
+    model_path = active_version["model_path"]
+    if not os.path.exists(model_path):
+        raise HTTPException(status_code=404, detail="Model file not found")
+
+    meta = active_version["metadata"]
+    model = joblib.load(model_path)
+
+    # Parse input CSV
+    try:
+        input_df = pd.read_csv(io.BytesIO(csv_content))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
+
+    if input_df.empty:
+        raise HTTPException(status_code=400, detail="Input CSV is empty")
+
+    # Check for dataset drift (using the input data as reference)
+    try:
+        current_df = load_raw(dataset_id)
+        drift_check = detect_dataset_drift(dataset_id, current_df)
+        if drift_check["drift_detected"]:
+            error_details = {
+                "error": "Dataset has changed since model training",
+                "drift_details": drift_check,
+                "recommendation": "Please retrain the model with the current dataset"
+            }
+            raise HTTPException(status_code=409, detail=json.dumps(error_details))
+    except Exception:
+        # If we can't check drift, continue but log warning
+        pass
+
+    # Process each row for prediction
+    predictions = []
+    errors = []
+    
+    raw_columns = [
+        c for c in meta["raw_columns"]
+        if c not in meta.get("dropped_id_columns", [])
+    ]
+    
+    defaults = meta["feature_defaults"]
+    
+    for idx, row in input_df.iterrows():
+        try:
+            # Prepare features
+            filled_row = {}
+            auto_filled = []
+            
+            for col in raw_columns:
+                val = row.get(col)
+                if pd.isna(val) or val == "":
+                    filled_row[col] = defaults.get(col, 0.0 if pd.api.types.is_numeric_dtype(type(defaults.get(col))) else "UNKNOWN")
+                    auto_filled.append(col)
+                else:
+                    filled_row[col] = val
+            
+            X = pd.DataFrame([filled_row])
+            
+            # Make prediction
+            pred = model.predict(X)[0]
+            
+            confidence = None
+            model_step = model.named_steps.get("model")
+            if hasattr(model_step, "predict_proba"):
+                probs = model.predict_proba(X)[0]
+                confidence = float(np.max(probs))
+            
+            predictions.append({
+                "row_index": int(idx),
+                "prediction": pred,
+                "confidence": confidence,
+                "auto_filled": auto_filled
+            })
+            
+        except Exception as e:
+            errors.append({
+                "row_index": int(idx),
+                "error": str(e)
+            })
+    
+    # Create output CSV
+    output_df = input_df.copy()
+    output_df["prediction"] = [p["prediction"] for p in predictions] + [None] * len(errors)
+    output_df["confidence"] = [p["confidence"] for p in predictions] + [None] * len(errors)
+    
+    # Convert to CSV string
+    output_csv = output_df.to_csv(index=False)
+    
+    return {
+        "status": "ok",
+        "total_rows": len(input_df),
+        "successful_predictions": len(predictions),
+        "errors": len(errors),
+        "predictions": predictions,
+        "error_details": errors,
+        "output_csv": output_csv
     }

@@ -211,6 +211,43 @@ if 'dataset_id' not in st.session_state:
 dataset_id = st.session_state.dataset_id
 
 # =====================================================
+# CHAT QUERY PROCESSOR
+# =====================================================
+def process_chat_query(question, dataset_id):
+    """
+    Industrial-level chat processing with comprehensive AI understanding
+    """
+    try:
+        payload = {
+            "question": question,
+            "history": st.session_state.get('chat_history', [])[-10:]  # Last 10 messages for context
+        }
+        resp = requests.post(f"{API}/api/chat/{dataset_id}", json=payload, timeout=60)  # Increased timeout
+        if resp.status_code == 200:
+            data = resp.json()
+            if data.get("status") == "ok":
+                return {
+                    'text_response': data.get("answer", "No answer generated"),
+                    'structured_data': data.get("structured_data"),
+                    'context_used': data.get("context_used", [])
+                }
+            else:
+                return {
+                    'text_response': f"Error: {data.get('message', 'Unknown error')}",
+                    'structured_data': None
+                }
+        else:
+            return {
+                'text_response': f"Backend error: {resp.status_code} - {resp.text}",
+                'structured_data': None
+            }
+    except Exception as e:
+        return {
+            'text_response': f"Connection error: {str(e)}",
+            'structured_data': None
+        }
+
+# =====================================================
 # CHAT CONTAINER
 # =====================================================
 st.markdown("### 💬 **Conversation**")
@@ -373,39 +410,6 @@ if submit_button and user_input.strip():
 # =====================================================
 # ENHANCED CHAT PROCESSING FUNCTION
 # =====================================================
-def process_chat_query(question, dataset_id):
-    """
-    Industrial-level chat processing with comprehensive AI understanding
-    """
-    try:
-        payload = {
-            "question": question,
-            "history": st.session_state.get('chat_history', [])[-10:]  # Last 10 messages for context
-        }
-        resp = requests.post(f"{API}/chat/{dataset_id}", json=payload, timeout=60)  # Increased timeout
-        if resp.status_code == 200:
-            data = resp.json()
-            if data.get("status") == "ok":
-                return {
-                    'text_response': data.get("answer", "No answer generated"),
-                    'structured_data': data.get("structured_data"),
-                    'context_used': data.get("context_used", [])
-                }
-            else:
-                return {
-                    'text_response': f"Error: {data.get('message', 'Unknown error')}",
-                    'structured_data': None
-                }
-        else:
-            return {
-                'text_response': f"Backend error: {resp.status_code} - {resp.text}",
-                'structured_data': None
-            }
-    except Exception as e:
-        return {
-            'text_response': f"Connection error: {str(e)}",
-            'structured_data': None
-        }
 
 # =====================================================
 # FOOTER
