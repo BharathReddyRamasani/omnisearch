@@ -7,96 +7,90 @@ st.set_page_config(
     page_icon="🚀"
 )
 
-# Custom CSS for industrial look
+# Custom CSS for modern blue gradient design
 st.markdown("""
 <style>
-    /* Global overrides for extreme visibility and attractiveness */
+    /* Global theme colors: Modern blue gradients */
     body {
         background-color: #ffffff !important;
-        color: #2c3e50 !important;
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        color: #1f2937 !important;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     }
     .stApp {
-        background-color: #ffffff !important;
-    }
-    .css-1d391kg, .css-12oz5g7, .css-1r6slb0 {
-        background-color: #ffffff !important;
-    }
-    /* Ensure all text is visible */
-    .stText, .stMarkdown, .stHeader, .stSubheader, p, h1, h2, h3, h4, h5, h6 {
-        color: #2c3e50 !important;
-    }
-    /* Sidebar styling */
-    .css-1lcbmhc, .css-1outpf7 {
-        background: linear-gradient(180deg, #34495e, #2c3e50) !important;
-        color: white !important;
-    }
-    .css-1lcbmhc .stRadio label, .css-1outpf7 .stRadio label {
-        color: white !important;
-    }
-    /* Main content area */
-    .css-1y4p8pa {
-        background-color: #f8f9fa !important;
+        background-color: #f9fafb !important;
     }
     
+    /* Main header */
     .main-header {
-        background: linear-gradient(135deg, #1e3c72, #2a5298, #3a7bd5, #4a90e2);
-        padding: 3rem;
+        background: linear-gradient(135deg, #0052cc 0%, #1e6ed4 50%, #2563eb 100%);
+        padding: 3.5rem;
         border-radius: 20px;
         color: white;
         text-align: center;
-        margin-bottom: 2rem;
-        box-shadow: 0 15px 35px rgba(0,0,0,0.3);
-        border: 2px solid rgba(255,255,255,0.1);
+        margin-bottom: 2.5rem;
+        box-shadow: 0 20px 40px rgba(5, 82, 204, 0.2);
+        border: 1px solid rgba(255,255,255,0.1);
     }
     .main-title {
         font-size: 4rem;
-        font-weight: bold;
+        font-weight: 800;
         margin: 0;
-        text-shadow: 3px 3px 6px rgba(0,0,0,0.4);
-        letter-spacing: 2px;
+        letter-spacing: -1px;
+        text-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     .main-subtitle {
-        font-size: 1.5rem;
-        margin: 1rem 0 0 0;
+        font-size: 1.4rem;
+        margin: 1.2rem 0 0 0;
         opacity: 0.95;
-        font-weight: 300;
+        font-weight: 500;
     }
+    
+    /* Workflow cards */
     .workflow-card {
-        background: linear-gradient(135deg, #ffffff, #f8f9fa);
+        background: linear-gradient(135deg, #f0f6ff 0%, #e6f2ff 100%);
         padding: 2rem;
-        border-radius: 15px;
-        border-left: 6px solid #1e3c72;
+        border-radius: 16px;
+        border-left: 5px solid #0052cc;
         margin: 1.5rem 0;
-        box-shadow: 0 8px 25px rgba(0,0,0,0.1);
-        border: 1px solid #e9ecef;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        border: 1px solid #dbeafe;
+        transition: all 0.3s ease;
+        color: #1f2937;
+    }
+    .workflow-card:hover {
+        box-shadow: 0 8px 30px rgba(5, 82, 204, 0.1);
+        transform: translateY(-2px);
     }
     .workflow-card h4 {
-        color: #1e3c72;
+        color: #0052cc;
         margin-bottom: 1rem;
+        font-weight: 600;
     }
     .workflow-card ol li {
-        margin: 0.5rem 0;
-        color: #495057;
+        margin: 0.75rem 0;
+        color: #4b5563;
+        font-weight: 500;
     }
+    
+    /* Metric cards */
     .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #0052cc 0%, #2563eb 100%);
         color: white;
-        padding: 1.5rem;
-        border-radius: 15px;
+        padding: 1.75rem;
+        border-radius: 16px;
         text-align: center;
-        box-shadow: 0 8px 25px rgba(0,0,0,0.2);
-        transition: all 0.3s ease;
-        border: 2px solid rgba(255,255,255,0.1);
+        box-shadow: 0 10px 30px rgba(5, 82, 204, 0.15);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        border: 1px solid rgba(255,255,255,0.1);
     }
     .metric-card:hover {
-        transform: translateY(-5px);
-        box-shadow: 0 12px 35px rgba(0,0,0,0.3);
+        transform: translateY(-8px);
+        box-shadow: 0 15px 40px rgba(5, 82, 204, 0.25);
     }
     .metric-card h4 {
         margin: 0;
-        font-size: 1.2rem;
-        font-weight: bold;
+        font-size: 1.1rem;
+        font-weight: 600;
     }
     .metric-card p {
         margin: 0.5rem 0 0 0;
@@ -118,11 +112,12 @@ st.markdown("""
     }
     /* Status metrics */
     .stMetric {
-        background: white;
+        background: linear-gradient(135deg, #f0f6ff 0%, #e6f2ff 100%);
         padding: 1rem;
         border-radius: 10px;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        border: 1px solid #e9ecef;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        border: 1px solid #dbeafe;
+        color: #1f2937;
     }
     .stMetric label {
         color: #6c757d !important;

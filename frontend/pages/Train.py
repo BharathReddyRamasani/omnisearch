@@ -52,12 +52,13 @@ with st.sidebar:
 # =====================================================
 st.markdown(
     """
-    <div style="padding:2.5rem;border-radius:20px;
-                background:linear-gradient(135deg,#1e3c72,#2a5298,#3a7bd5);
+    <div style="padding:3.5rem;border-radius:20px;
+                background:linear-gradient(135deg,#0052cc 0%,#1e6ed4 50%,#2563eb 100%);
                 color:white;text-align:center;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
-        <h1 style='margin:0;font-size:3rem;'>🚀 Industrial AutoML Training</h1>
-        <p style='margin:10px 0 0 0;font-size:1.2rem;opacity:0.9;'>
+                box-shadow: 0 20px 40px rgba(5,82,204,0.2);
+                border: 1px solid rgba(255,255,255,0.1);">
+        <h1 style='margin:0;font-size:3rem;font-weight:800;letter-spacing:-1px;'>🚀 Industrial AutoML Training</h1>
+        <p style='margin:12px 0 0 0;font-size:1.2rem;opacity:0.92;font-weight:500;'>
             10+ Algorithms • Advanced Metrics • Enterprise-Grade
         </p>
     </div>

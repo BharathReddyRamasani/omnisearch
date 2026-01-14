@@ -281,18 +281,30 @@ with pred_tabs[0]:
         with cols[i % 3]:
             default_val = defaults.get(f, "")
             display_default = str(default_val) if default_val is not None else ""
-            payload[f] = st.text_input(
+            user_input = st.text_input(
                 label=f,
                 value=display_default,
                 key=f"single_{f}",
             )
+            # Clean and convert input
+            if user_input and user_input.strip():
+                try:
+                    payload[f] = float(user_input)
+                except ValueError:
+                    payload[f] = str(user_input).strip()
+            else:
+                payload[f] = None
 
     # PREDICT
     st.markdown("---")
     if st.button("🚀 Predict", type="primary", use_container_width=True):
         with st.spinner("Scoring with enterprise model…"):
             try:
-                r = requests.post(f"{API}/predict/{dataset_id}", json=payload, timeout=30)
+                # Clean payload: remove None values
+                clean_payload = {k: v for k, v in payload.items() if v is not None}
+                clean_payload["_mode"] = payload.get("_mode", "full")
+                
+                r = requests.post(f"{API}/predict/{dataset_id}", json=clean_payload, timeout=30)
                 r.raise_for_status()
                 res = r.json()
             except requests.exceptions.RequestException as e:
@@ -357,23 +369,34 @@ with pred_tabs[1]:
                         # Convert to list of dicts
                         batch_data = df_batch.to_dict('records')
 
-                        # Make batch request (assuming backend supports it, else loop)
+                        # Make batch request
                         predictions = []
                         for row in batch_data:
-                            payload = {"_mode": "full"}
-                            payload.update(row)
                             try:
+                                # Clean row data
+                                clean_row = {}
+                                for key, val in row.items():
+                                    if pd.isna(val):
+                                        clean_row[key] = None
+                                    elif isinstance(val, str):
+                                        clean_row[key] = val.strip()
+                                    else:
+                                        clean_row[key] = val
+                                
+                                payload = {"_mode": "full"}
+                                payload.update(clean_row)
+                                
                                 r = requests.post(f"{API}/predict/{dataset_id}", json=payload, timeout=30)
                                 if r.status_code == 200:
                                     res = r.json()
                                     if res.get("status") == "ok":
-                                        predictions.append(res["prediction"])
+                                        predictions.append(res.get("prediction", "Error"))
                                     else:
-                                        predictions.append("Error")
+                                        predictions.append(f"Error: {res.get('error', 'Unknown')}")
                                 else:
-                                    predictions.append("Error")
-                            except:
-                                predictions.append("Error")
+                                    predictions.append(f"Error: {r.status_code}")
+                            except Exception as e:
+                                predictions.append(f"Error: {str(e)}")
 
                         df_batch["Prediction"] = predictions
                         st.success("Batch prediction completed!")

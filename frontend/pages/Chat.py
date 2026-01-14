@@ -15,69 +15,76 @@ st.set_page_config(
 )
 
 # =====================================================
-# INDUSTRIAL CSS STYLING
+# MODERN BLUE GRADIENT CSS STYLING
 # =====================================================
 st.markdown("""
 <style>
     .chat-header {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 2rem;
+        background: linear-gradient(135deg, #0052cc 0%, #1e6ed4 50%, #2563eb 100%);
+        padding: 2.5rem;
         border-radius: 20px;
         color: white;
         text-align: center;
         margin-bottom: 2rem;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+        box-shadow: 0 15px 35px rgba(5, 82, 204, 0.2);
+        border: 1px solid rgba(255,255,255,0.1);
     }
     .chat-title {
         font-size: 2.5rem;
-        font-weight: bold;
+        font-weight: 700;
         margin: 0;
-        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        letter-spacing: -0.5px;
     }
     .chat-subtitle {
         font-size: 1.1rem;
-        margin: 0.5rem 0 0 0;
-        opacity: 0.9;
+        margin: 0.75rem 0 0 0;
+        opacity: 0.92;
+        font-weight: 500;
     }
     .chat-container {
         background: white;
-        border-radius: 15px;
-        padding: 1.5rem;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        border-radius: 16px;
+        padding: 1.75rem;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         margin: 1rem 0;
         max-height: 600px;
         overflow-y: auto;
+        border: 1px solid #e5e7eb;
     }
     .message-user {
-        background: linear-gradient(135deg, #667eea, #764ba2);
+        background: linear-gradient(135deg, #0052cc, #2563eb);
         color: white;
-        padding: 1rem;
-        border-radius: 15px 15px 5px 15px;
-        margin: 0.5rem 0;
-        margin-left: 20%;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        padding: 1rem 1.25rem;
+        border-radius: 16px 16px 4px 16px;
+        margin: 0.75rem 0;
+        margin-left: 15%;
+        box-shadow: 0 4px 12px rgba(5, 82, 204, 0.15);
+        border: 1px solid rgba(255,255,255,0.1);
     }
     .message-bot {
-        background: #f8f9fa;
-        color: #333;
-        padding: 1rem;
-        border-radius: 15px 15px 15px 5px;
-        margin: 0.5rem 0;
-        margin-right: 20%;
-        border-left: 4px solid #667eea;
-        box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        background: #f9fafb;
+        color: #1f2937;
+        padding: 1rem 1.25rem;
+        border-radius: 16px 16px 16px 4px;
+        margin: 0.75rem 0;
+        margin-right: 15%;
+        border-left: 4px solid #0052cc;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        border: 1px solid #e5e7eb;
     }
     .message-timestamp {
-        font-size: 0.8rem;
-        opacity: 0.7;
+        font-size: 0.75rem;
+        opacity: 0.6;
         margin-top: 0.5rem;
     }
     .input-container {
         background: white;
-        padding: 1.5rem;
-        border-radius: 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        padding: 1.75rem;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         margin: 1rem 0;
+        border: 1px solid #e5e7eb;
+    }
     }
     .typing-indicator {
         display: inline-block;
@@ -215,36 +222,52 @@ dataset_id = st.session_state.dataset_id
 # =====================================================
 def process_chat_query(question, dataset_id):
     """
-    Industrial-level chat processing with comprehensive AI understanding
+    OmniSearch AI DSL-based chat processor.
+    Returns JSON DSL only - never generates explanatory text.
     """
     try:
         payload = {
             "question": question,
             "history": st.session_state.get('chat_history', [])[-10:]  # Last 10 messages for context
         }
-        resp = requests.post(f"{API}/api/chat/{dataset_id}", json=payload, timeout=60)  # Increased timeout
+        resp = requests.post(f"{API}/api/chat/{dataset_id}", json=payload, timeout=60)
         if resp.status_code == 200:
             data = resp.json()
             if data.get("status") == "ok":
+                dsl = data.get("dsl", {})
+                result = data.get("result")
+                
+                # Format response based on DSL action
+                action = dsl.get("action", "unknown")
+                if action == "unsupported":
+                    return {
+                        'dsl': dsl,
+                        'result': None,
+                        'error': dsl.get('reason', 'Unsupported query')
+                    }
+                
                 return {
-                    'text_response': data.get("answer", "No answer generated"),
-                    'structured_data': data.get("structured_data"),
-                    'context_used': data.get("context_used", [])
+                    'dsl': dsl,
+                    'result': result,
+                    'error': None
                 }
             else:
                 return {
-                    'text_response': f"Error: {data.get('message', 'Unknown error')}",
-                    'structured_data': None
+                    'dsl': {'action': 'unsupported'},
+                    'result': None,
+                    'error': data.get('message', 'Unknown error')
                 }
         else:
             return {
-                'text_response': f"Backend error: {resp.status_code} - {resp.text}",
-                'structured_data': None
+                'dsl': {'action': 'unsupported'},
+                'result': None,
+                'error': f"Backend error: {resp.status_code}"
             }
     except Exception as e:
         return {
-            'text_response': f"Connection error: {str(e)}",
-            'structured_data': None
+            'dsl': {'action': 'unsupported'},
+            'result': None,
+            'error': f"Connection error: {str(e)}"
         }
 
 # =====================================================
@@ -277,27 +300,43 @@ with chat_container:
                 </div>
                 """, unsafe_allow_html=True)
             else:
-                # Check if message has structured data
-                if 'structured_data' in message:
+                # Display AI response with DSL info
+                if 'dsl' in message:
+                    action = message['dsl'].get('action', 'unknown')
+                    error = message.get('error')
+                    result = message.get('result')
+                    
+                    # Display the DSL action
                     st.markdown(f"""
                     <div class="message-bot">
-                        <strong>AI Assistant:</strong> {message['content']}
+                        <strong>AI DSL Query:</strong> {action}
                         <div class="message-timestamp">{message['timestamp']}</div>
                     </div>
                     """, unsafe_allow_html=True)
-
-                    # Display structured data
-                    if message['structured_data'].get('type') == 'dataframe':
-                        st.dataframe(message['structured_data']['data'])
-                    elif message['structured_data'].get('type') == 'metrics':
-                        cols = st.columns(len(message['structured_data']['data']))
-                        for i, (key, value) in enumerate(message['structured_data']['data'].items()):
-                            with cols[i % len(cols)]:
-                                st.metric(key.replace('_', ' ').title(), value)
-                    elif message['structured_data'].get('type') == 'chart':
-                        # This would be handled by the backend returning chart data
-                        pass
+                    
+                    # Display error if any
+                    if error:
+                        st.error(f"⚠️ {error}")
+                    
+                    # Display DSL parameters as expandable JSON
+                    if action != 'unsupported':
+                        with st.expander("📋 Query Details (JSON DSL)"):
+                            st.json(message['dsl'])
+                    
+                    # Display result if available
+                    if result and not isinstance(result, dict) or (isinstance(result, dict) and 'error' not in result):
+                        st.success("✅ Query executed successfully")
+                        if isinstance(result, dict):
+                            # Format result based on type
+                            if 'dataframe' in str(type(result)):
+                                st.dataframe(result)
+                            else:
+                                with st.expander("📊 Results"):
+                                    st.json(result, expanded=False)
+                        else:
+                            st.write(result)
                 else:
+                    # Legacy message format
                     st.markdown(f"""
                     <div class="message-bot">
                         <strong>AI Assistant:</strong> {message['content']}
@@ -334,33 +373,31 @@ if not st.session_state.chat_history:
 # =====================================================
 st.markdown("### ✍️ **Ask Your Question**")
 
-# Input form
-with st.form(key="chat_form", clear_on_submit=True):
+# Professional input with button
+col1, col2 = st.columns([1, 0.15])
+with col1:
     user_input = st.text_area(
         "Type your question here...",
         height=100,
         placeholder="Ask me anything about your data, models, or insights...",
-        help="Be specific for better answers. Try questions like 'What's the model performance?' or 'Show me data quality metrics'"
+        key="chat_input",
+        help="Press Enter to submit, or use the send button below"
     )
 
-    col1, col2, col3 = st.columns([3, 1, 1])
+with col2:
+    st.write("")  # Spacing
+    st.write("")  # Spacing
+    send_button = st.button("🚀", key="send_btn", use_container_width=True, help="Send message")
+    clear_button = st.button("🔄", key="clear_btn", use_container_width=True, help="Clear history")
 
-    with col1:
-        submit_button = st.form_submit_button(
-            "🚀 Send Message",
-            type="primary",
-            use_container_width=True
-        )
+# Handle send button click or user submission
+submit_button = send_button
 
-    with col2:
-        if st.form_submit_button("🔄 Clear", use_container_width=True):
-            st.session_state.chat_history = []
-            st.rerun()
+# Handle clear
+if clear_button:
+    st.session_state.chat_history = []
+    st.rerun()
 
-    with col3:
-        voice_mode = st.form_submit_button("🎤 Voice", use_container_width=True)
-        if voice_mode:
-            st.info("Voice input coming soon!")
 
 # Handle user input
 if submit_button and user_input.strip():
@@ -375,22 +412,22 @@ if submit_button and user_input.strip():
 
     # Show typing indicator
     with st.spinner("🤖 AI is thinking..."):
-        time.sleep(1)  # Simulate processing time
+        time.sleep(0.5)
 
         try:
-            # Enhanced chat logic
+            # Get DSL response from backend
             response_data = process_chat_query(user_input.strip(), dataset_id)
 
-            # Add bot response to history
+            # Prepare bot message with DSL info
             bot_message = {
                 'role': 'assistant',
-                'content': response_data['text_response'],
+                'content': f"Query: {response_data['dsl'].get('action', 'unknown')}",
                 'timestamp': datetime.now().strftime("%H:%M:%S"),
-                'id': str(uuid.uuid4())
+                'id': str(uuid.uuid4()),
+                'dsl': response_data['dsl'],
+                'result': response_data['result'],
+                'error': response_data.get('error')
             }
-
-            if 'structured_data' in response_data:
-                bot_message['structured_data'] = response_data['structured_data']
 
             st.session_state.chat_history.append(bot_message)
 
@@ -398,9 +435,10 @@ if submit_button and user_input.strip():
             # Error handling
             error_message = {
                 'role': 'assistant',
-                'content': f"I apologize, but I encountered an error: {str(e)}. Please try rephrasing your question.",
+                'content': f"Error processing query: {str(e)}",
                 'timestamp': datetime.now().strftime("%H:%M:%S"),
-                'id': str(uuid.uuid4())
+                'id': str(uuid.uuid4()),
+                'error': str(e)
             }
             st.session_state.chat_history.append(error_message)
 

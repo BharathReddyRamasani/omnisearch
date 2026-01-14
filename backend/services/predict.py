@@ -365,9 +365,17 @@ def dataset_hash(df: pd.DataFrame) -> str:
 # AUTOFILL HELPER
 # =====================================================
 def _autofill(col, user_value, defaults):
-    if user_value not in (None, "", " "):
-        return user_value
-    return defaults.get(col, 0.0 if pd.api.types.is_numeric_dtype(type(defaults.get(col))) else "UNKNOWN")
+    """Auto-fill missing values with defaults"""
+    # Handle None, empty strings, NaN
+    if user_value is None:
+        return defaults.get(col, 0.0)
+    if isinstance(user_value, str) and not user_value.strip():
+        return defaults.get(col, 0.0)
+    if isinstance(user_value, float) and pd.isna(user_value):
+        return defaults.get(col, 0.0)
+    
+    # Return the value as-is if provided
+    return user_value
 
 
 # =====================================================
@@ -376,6 +384,15 @@ def _autofill(col, user_value, defaults):
 def make_prediction(dataset_id: str, payload: dict):
     from backend.services.model_registry import ModelRegistry
     from backend.services.training import detect_dataset_drift
+    
+    # Validate and clean dataset_id
+    if not dataset_id or not isinstance(dataset_id, str):
+        raise HTTPException(status_code=400, detail="Invalid dataset_id")
+    
+    dataset_id = str(dataset_id).strip()
+    # Handle case where dataset_id has commas (malformed)
+    if "," in dataset_id:
+        dataset_id = dataset_id.split(",")[0].strip()
     
     # Get active model info from registry
     active_version = ModelRegistry.get_active_version(dataset_id)
@@ -412,9 +429,9 @@ def make_prediction(dataset_id: str, payload: dict):
     # FEATURE HANDLING
     # -------------------------------------------------
     raw_columns = [
-    c for c in meta["raw_columns"]
-    if c not in meta.get("id_columns", [])  
-]
+        c for c in meta["raw_columns"]
+        if c not in meta.get("id_columns", [])
+    ]
 
     defaults = meta["feature_defaults"]
     top_features = meta.get("top_features", raw_columns[:8])  # safety
@@ -430,9 +447,15 @@ def make_prediction(dataset_id: str, payload: dict):
 
     for col in raw_columns:
         val = payload.get(col)
+        # Clean value: handle None, empty strings, NaN
+        if val is None or (isinstance(val, str) and not val.strip()):
+            val = None
+        elif isinstance(val, str):
+            val = val.strip()
+        
         final = _autofill(col, val, defaults)
         row[col] = final
-        if payload.get(col) in (None, "", " "):  # only if truly missing/empty
+        if val is None or (isinstance(val, str) and not val.strip()):
             auto_filled.append(col)
 
     X = pd.DataFrame([row])
@@ -472,6 +495,14 @@ def make_batch_prediction(dataset_id: str, csv_content: bytes) -> Dict:
     from backend.services.model_registry import ModelRegistry
     from backend.services.training import detect_dataset_drift
     import io
+    
+    # Validate and clean dataset_id
+    if not dataset_id or not isinstance(dataset_id, str):
+        raise HTTPException(status_code=400, detail="Invalid dataset_id")
+    
+    dataset_id = str(dataset_id).strip()
+    if "," in dataset_id:
+        dataset_id = dataset_id.split(",")[0].strip()
     
     # Get active model info from registry
     active_version = ModelRegistry.get_active_version(dataset_id)

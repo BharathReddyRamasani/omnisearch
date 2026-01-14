@@ -298,8 +298,21 @@ def rollback_model_version(dataset_id: str, payload: dict):
 # =====================================================
 @api_router.post("/predict/{dataset_id}")
 def predict(dataset_id: str, payload: dict):
+    # Validate dataset_id
+    if not dataset_id or not isinstance(dataset_id, str):
+        raise HTTPException(status_code=400, detail="Invalid dataset_id")
+    
+    # Clean dataset_id (handle case where it has commas appended)
+    dataset_id = str(dataset_id).strip()
+    if "," in dataset_id:
+        dataset_id = dataset_id.split(",")[0].strip()
+    
+    # Ensure payload is a dict
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Payload must be a dictionary")
+    
     result = make_prediction(dataset_id, payload)
-    if result["status"] != "ok":
+    if result.get("status") not in ("ok", "error"):
         raise HTTPException(status_code=400, detail=result.get("error", "Prediction failed"))
     return safe(result)
 
@@ -308,13 +321,22 @@ def predict(dataset_id: str, payload: dict):
 # =====================================================
 @api_router.post("/predict/{dataset_id}/batch")
 async def predict_batch(dataset_id: str, file: UploadFile = File(...)):
+    # Validate dataset_id
+    if not dataset_id or not isinstance(dataset_id, str):
+        raise HTTPException(status_code=400, detail="Invalid dataset_id")
+    
+    # Clean dataset_id
+    dataset_id = str(dataset_id).strip()
+    if "," in dataset_id:
+        dataset_id = dataset_id.split(",")[0].strip()
+    
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(400, "Only CSV files allowed for batch prediction")
 
     content = await file.read()
     result = make_batch_prediction(dataset_id, content)
     
-    if result["status"] != "ok":
+    if result.get("status") not in ("ok", "error"):
         raise HTTPException(400, result.get("error", "Batch prediction failed"))
     
     # Return both JSON response and CSV download
@@ -338,6 +360,8 @@ def chat(dataset_id: str, payload: dict):
 app.include_router(api_router)
 # =====================================================
 # DATASET INFO & SAMPLE
+
+
 
 
 

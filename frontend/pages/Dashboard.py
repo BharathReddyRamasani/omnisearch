@@ -17,86 +17,117 @@ st.set_page_config(
 )
 
 # =====================================================
-# INDUSTRIAL CSS STYLING
+# MODERN BLUE GRADIENT CSS STYLING (Based on GalacticML Design)
 # =====================================================
 st.markdown("""
 <style>
+    /* Main theme colors: Blue gradients */
     .dashboard-header {
-        background: linear-gradient(135deg, #1e3c72, #2a5298, #3a7bd5, #4a90e2);
-        padding: 2.5rem;
+        background: linear-gradient(135deg, #0052cc 0%, #1e6ed4 50%, #2563eb 100%);
+        padding: 3rem 2.5rem;
         border-radius: 20px;
         color: white;
         text-align: center;
-        margin-bottom: 2rem;
-        box-shadow: 0 15px 35px rgba(0,0,0,0.3);
+        margin-bottom: 2.5rem;
+        box-shadow: 0 20px 40px rgba(5, 82, 204, 0.25);
     }
     .dashboard-title {
         font-size: 3.5rem;
-        font-weight: bold;
+        font-weight: 800;
         margin: 0;
-        text-shadow: 3px 3px 6px rgba(0,0,0,0.4);
+        letter-spacing: -0.5px;
+        text-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     .dashboard-subtitle {
-        font-size: 1.3rem;
+        font-size: 1.2rem;
         margin: 1rem 0 0 0;
-        opacity: 0.9;
+        opacity: 0.95;
+        font-weight: 500;
     }
     .metric-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #0052cc 0%, #2563eb 100%);
         color: white;
-        padding: 1.5rem;
-        border-radius: 15px;
+        padding: 1.75rem 1.5rem;
+        border-radius: 16px;
         text-align: center;
-        box-shadow: 0 8px 25px rgba(0,0,0,0.2);
-        transition: transform 0.3s ease;
+        box-shadow: 0 10px 30px rgba(5, 82, 204, 0.15);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        border: 1px solid rgba(255,255,255,0.1);
     }
     .metric-card:hover {
-        transform: translateY(-5px);
+        transform: translateY(-8px);
+        box-shadow: 0 15px 40px rgba(5, 82, 204, 0.25);
     }
     .metric-value {
         font-size: 2.5rem;
-        font-weight: bold;
-        margin: 0.5rem 0;
+        font-weight: 700;
+        margin: 0.75rem 0 0.25rem 0;
+        letter-spacing: -1px;
     }
     .metric-label {
-        font-size: 1rem;
-        opacity: 0.9;
+        font-size: 0.95rem;
+        opacity: 0.92;
+        font-weight: 500;
     }
     .status-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 15px;
-        border-left: 5px solid #28a745;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        background: linear-gradient(135deg, #f0f6ff 0%, #e6f2ff 100%);
+        padding: 1.75rem;
+        border-radius: 16px;
+        border-left: 5px solid #0052cc;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         margin: 1rem 0;
+        transition: all 0.3s ease;
+        color: #1f2937;
+    }
+    .status-card:hover {
+        box-shadow: 0 8px 30px rgba(0,0,0,0.12);
     }
     .alert-card {
-        background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
         color: white;
         padding: 1rem;
-        border-radius: 10px;
+        border-radius: 12px;
         margin: 1rem 0;
+        border: 1px solid rgba(255,255,255,0.2);
     }
     .progress-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        background: linear-gradient(135deg, #f0f6ff 0%, #e6f2ff 100%);
+        padding: 1.75rem;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         margin: 1rem 0;
+        color: #1f2937;
     }
     .chart-container {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 15px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        background: linear-gradient(135deg, #f0f6ff 0%, #e6f2ff 100%);
+        padding: 1.75rem;
+        border-radius: 16px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
         margin: 1rem 0;
+        color: #1f2937;
     }
     .sidebar-metric {
-        background: #f8f9fa;
+        background: linear-gradient(135deg, #f0f6ff 0%, #e6f2ff 100%);
         padding: 1rem;
-        border-radius: 10px;
-        margin: 0.5rem 0;
-        border-left: 4px solid #007bff;
+        border-radius: 12px;
+        margin: 0.75rem 0;
+        border-left: 4px solid #0052cc;
+        transition: all 0.3s ease;
+    }
+    .sidebar-metric:hover {
+        background: linear-gradient(135deg, #e6f2ff 0%, #dceeff 100%);
+    }
+    /* Responsive sizing */
+    @media (max-width: 768px) {
+        .dashboard-title {
+            font-size: 2.5rem;
+        }
+        .dashboard-subtitle {
+            font-size: 1rem;
+        }
+        .metric-value {
+            font-size: 2rem;
+        }
     }
 </style>
 """, unsafe_allow_html=True)
@@ -181,9 +212,10 @@ try:
     info_resp = requests.get(f"{API}/datasets/{dataset_id}/info", timeout=5)
     dataset_info = info_resp.json() if info_resp.status_code == 200 else {}
 
-    # Get EDA data
+    # Get EDA data - Extract from nested 'eda' key if present
     eda_resp = requests.get(f"{API}/eda/{dataset_id}", timeout=10)
-    eda_data = eda_resp.json() if eda_resp.status_code == 200 else {}
+    eda_response = eda_resp.json() if eda_resp.status_code == 200 else {}
+    eda_data = eda_response.get('eda', eda_response)  # Handle both nested and flat responses
 
     # Get model metadata
     meta_resp = requests.get(f"{API}/meta/{dataset_id}", timeout=5)
@@ -207,15 +239,19 @@ with kpi_col1:
     """, unsafe_allow_html=True)
 
 with kpi_col2:
+    # Handle columns as either list or int
+    cols_data = dataset_info.get('columns', 0)
+    cols_count = len(cols_data) if isinstance(cols_data, list) else cols_data
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-label">📋 Columns</div>
-        <div class="metric-value">{dataset_info.get('columns', 0)}</div>
+        <div class="metric-value">{cols_count}</div>
     </div>
     """, unsafe_allow_html=True)
 
 with kpi_col3:
-    missing_total = sum(eda_data.get('missing', {}).values()) if 'missing' in eda_data else 0
+    missing_data = eda_data.get('missing', {})
+    missing_total = sum(missing_data.values()) if isinstance(missing_data, dict) else 0
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-label">⚠️ Missing Values</div>
@@ -313,7 +349,7 @@ with tab_overview:
     fig.add_trace(go.Bar(
         x=progress_df['Step'],
         y=progress_df['Progress'],
-        marker_color=['#28a745', '#28a745', '#28a745', '#28a745', '#ffc107'],
+        marker_color=['#0052cc', '#0052cc', '#0052cc', '#0052cc', '#2563eb'],
         text=[f"{p}%" for p in progress_df['Progress']],
         textposition='auto'
     ))
@@ -341,22 +377,37 @@ with tab_analytics:
         quality_col1, quality_col2, quality_col3 = st.columns(3)
 
         with quality_col1:
-            completeness = (1 - sum(eda_data.get('missing', {}).values()) / (dataset_info.get('rows', 1) * dataset_info.get('columns', 1))) * 100
-            st.metric("Data Completeness", f"{completeness:.1f}%")
+            # Safely calculate completeness
+            missing_data = eda_data.get('missing', {})
+            rows = dataset_info.get('rows', 0)
+            cols_data = dataset_info.get('columns', 0)
+            # Handle columns as either list or int
+            cols = len(cols_data) if isinstance(cols_data, list) else cols_data
+            
+            if rows > 0 and cols > 0 and isinstance(missing_data, dict):
+                missing_count = sum(missing_data.values())
+                completeness = (1 - (missing_count / (rows * cols))) * 100
+            else:
+                completeness = 100
+            st.metric("Data Completeness", f"{max(0, completeness):.1f}%")
 
         with quality_col2:
-            numeric_cols = len([c for c in eda_data.get('dtypes', {}) if 'int' in str(eda_data['dtypes'][c]).lower() or 'float' in str(eda_data['dtypes'][c]).lower()])
+            # Get numeric columns count
+            summary = eda_data.get('summary', {})
+            numeric_cols = sum(1 for v in summary.values() if v and isinstance(v, dict) and 'mean' in v)
             st.metric("Numeric Features", numeric_cols)
 
         with quality_col3:
-            categorical_cols = len([c for c in eda_data.get('dtypes', {}) if 'object' in str(eda_data['dtypes'][c]).lower()])
+            # Get categorical columns count
+            categorical_cols = sum(1 for v in summary.values() if v and isinstance(v, dict) and 'unique' in v)
             st.metric("Categorical Features", categorical_cols)
 
         # Missing values visualization
         st.markdown("### 📊 **Missing Values Analysis**")
 
-        if eda_data.get('missing'):
-            missing_df = pd.DataFrame(list(eda_data['missing'].items()), columns=['Column', 'Missing Count'])
+        missing_data = eda_data.get('missing', {})
+        if missing_data and isinstance(missing_data, dict):
+            missing_df = pd.DataFrame(list(missing_data.items()), columns=['Column', 'Missing Count'])
             missing_df = missing_df[missing_df['Missing Count'] > 0].sort_values('Missing Count', ascending=False)
 
             if not missing_df.empty:
@@ -372,20 +423,24 @@ with tab_analytics:
             else:
                 st.success("🎉 No missing values detected!")
 
-        # Data types distribution
+        # Data types distribution from summary statistics
         st.markdown("### 🏷️ **Data Types Distribution**")
 
-        if eda_data.get('dtypes'):
-            dtypes_df = pd.DataFrame(list(eda_data['dtypes'].items()), columns=['Column', 'Type'])
-            type_counts = dtypes_df['Type'].value_counts()
+        summary = eda_data.get('summary', {})
+        if summary:
+            numeric_count = sum(1 for v in summary.values() if v and isinstance(v, dict) and 'mean' in v)
+            categorical_count = sum(1 for v in summary.values() if v and isinstance(v, dict) and 'unique' in v)
+            
+            if numeric_count > 0 or categorical_count > 0:
+                type_counts = pd.Series({'Numeric': numeric_count, 'Categorical': categorical_count})
 
-            fig = px.pie(
-                values=type_counts.values,
-                names=type_counts.index,
-                title="Data Types Distribution",
-                color_discrete_sequence=px.colors.qualitative.Set3
-            )
-            st.plotly_chart(fig, use_container_width=True)
+                fig = px.pie(
+                    values=type_counts.values,
+                    names=type_counts.index,
+                    title="Data Types Distribution",
+                    color_discrete_sequence=['#0052cc', '#2563eb']
+                )
+                st.plotly_chart(fig, use_container_width=True)
 
     else:
         st.info("📊 Run EDA analysis to unlock advanced analytics")
@@ -445,7 +500,7 @@ with tab_models:
 
         with champion_col1:
             st.markdown(f"""
-            <div style="background: linear-gradient(135deg, #28a745, #20c997); color: white; padding: 1.5rem; border-radius: 15px;">
+            <div style="background: linear-gradient(135deg, #0052cc, #2563eb); color: white; padding: 1.75rem; border-radius: 16px; box-shadow: 0 10px 30px rgba(5, 82, 204, 0.2);">
                 <h4>🏆 Best Model</h4>
                 <h2>{model_meta.get('best_model', 'N/A')}</h2>
                 <p>Score: {model_meta.get('best_score', 0):.4f}</p>
@@ -557,7 +612,7 @@ with tab_monitoring:
         y=performance_data['accuracy'],
         mode='lines+markers',
         name='Model Accuracy',
-        line=dict(color='#28a745', width=2)
+        line=dict(color='#0052cc', width=2)
     ))
 
     fig.add_trace(go.Scatter(
@@ -565,7 +620,7 @@ with tab_monitoring:
         y=performance_data['latency'],
         mode='lines+markers',
         name='Response Time (ms)',
-        line=dict(color='#ffc107', width=2),
+        line=dict(color='#2563eb', width=2),
         yaxis='y2'
     ))
 

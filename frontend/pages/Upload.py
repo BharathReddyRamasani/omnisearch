@@ -15,67 +15,68 @@ st.set_page_config(
 st.markdown("""
 <style>
     .upload-header {
-        background: linear-gradient(135deg, #1e3c72, #2a5298, #3a7bd5, #4a90e2, #5ba0f2);
-        padding: 3rem;
+        background: linear-gradient(135deg, #0052cc 0%, #1e6ed4 50%, #2563eb 100%);
+        padding: 3.5rem;
         border-radius: 20px;
         color: white;
         text-align: center;
-        margin-bottom: 2rem;
-        box-shadow: 0 15px 35px rgba(0,0,0,0.3);
-        border: 2px solid rgba(255,255,255,0.1);
+        margin-bottom: 2.5rem;
+        box-shadow: 0 20px 40px rgba(5, 82, 204, 0.2);
+        border: 1px solid rgba(255,255,255,0.1);
     }
     .upload-title {
         font-size: 4rem;
-        font-weight: bold;
+        font-weight: 800;
         margin: 0;
-        text-shadow: 3px 3px 6px rgba(0,0,0,0.4);
-        letter-spacing: 2px;
+        letter-spacing: -1px;
+        text-shadow: 0 2px 8px rgba(0,0,0,0.1);
     }
     .upload-subtitle {
-        font-size: 1.5rem;
-        margin: 1rem 0 0 0;
+        font-size: 1.4rem;
+        margin: 1.2rem 0 0 0;
         opacity: 0.95;
-        font-weight: 300;
+        font-weight: 500;
     }
     .upload-zone {
-        background: linear-gradient(135deg, #ffffff, #f8f9fa);
-        padding: 3rem;
+        background: white;
+        padding: 3.5rem;
         border-radius: 20px;
-        border: 3px dashed #1e3c72;
+        border: 3px dashed #0052cc;
         text-align: center;
         margin: 2rem 0;
-        box-shadow: 0 8px 25px rgba(0,0,0,0.1);
-        transition: all 0.3s ease;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .upload-zone:hover {
-        border-color: #4a90e2;
-        box-shadow: 0 12px 35px rgba(0,0,0,0.2);
-        transform: translateY(-2px);
+        border-color: #2563eb;
+        box-shadow: 0 15px 40px rgba(5, 82, 204, 0.15);
+        transform: translateY(-4px);
     }
     .upload-icon {
         font-size: 5rem;
-        color: #1e3c72;
+        color: #0052cc;
         margin-bottom: 1rem;
     }
     .upload-text {
         font-size: 1.3rem;
-        color: #495057;
+        color: #1f2937;
         margin: 1rem 0;
+        font-weight: 600;
     }
     .upload-subtext {
         font-size: 1rem;
-        color: #6c757d;
+        color: #6b7280;
         margin: 0.5rem 0;
     }
     .success-card {
-        background: linear-gradient(135deg, #28a745, #20c997);
+        background: linear-gradient(135deg, #0052cc, #2563eb);
         color: white;
-        padding: 2rem;
-        border-radius: 15px;
+        padding: 2.5rem;
+        border-radius: 16px;
         text-align: center;
-        box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+        box-shadow: 0 15px 35px rgba(5, 82, 204, 0.2);
         margin: 2rem 0;
-        border: 2px solid rgba(255,255,255,0.1);
+        border: 1px solid rgba(255,255,255,0.1);
     }
     .success-icon {
         font-size: 3rem;
@@ -110,23 +111,26 @@ st.markdown("""
         color: #495057;
     }
     .next-steps {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #0052cc 0%, #2563eb 100%);
         color: white;
-        padding: 2rem;
-        border-radius: 15px;
+        padding: 2.5rem;
+        border-radius: 16px;
         margin: 2rem 0;
-        box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+        box-shadow: 0 15px 35px rgba(5, 82, 204, 0.2);
+        border: 1px solid rgba(255,255,255,0.1);
     }
     .next-steps h3 {
         margin-top: 0;
         font-size: 1.8rem;
+        font-weight: 700;
     }
     .step-item {
-        background: rgba(255,255,255,0.1);
-        padding: 1rem;
-        border-radius: 10px;
+        background: rgba(255,255,255,0.12);
+        padding: 1.25rem;
+        border-radius: 12px;
         margin: 1rem 0;
-        border-left: 4px solid rgba(255,255,255,0.3);
+        border-left: 4px solid rgba(255,255,255,0.4);
+        text-align: left;
     }
     .step-icon {
         font-size: 1.5rem;
