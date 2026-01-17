@@ -1,11 +1,13 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.requests import Request
+from fastapi.exceptions import HTTPException as FastAPIHTTPException
 
 import os
 import json
 import pandas as pd
+import logging
 
 from backend.services.ingest import process_upload
 from backend.services.eda import generate_eda
@@ -17,6 +19,11 @@ from backend.services.registry import submit_training_job, get_job
 from backend.services.utils import safe, raw_path, datasetdir, model_dir
 from backend.services.chat import get_chat_response
 
+# =====================================================
+# LOGGING
+# =====================================================
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 # =====================================================
@@ -32,9 +39,102 @@ app.add_middleware(
 )
 
 # =====================================================
+# EXCEPTION HANDLERS (HTTPException MUST come FIRST)
+# =====================================================
+
+# Handle FastAPI HTTPExceptions with proper status codes
+@app.exception_handler(FastAPIHTTPException)
+async def http_exception_handler(request: Request, exc: FastAPIHTTPException):
+    """
+    Handle FastAPI HTTPExceptions.
+    
+    Must be defined BEFORE general Exception handler to take priority.
+    Preserves the original status code and structured error format.
+    """
+    logger.warning(f"HTTP exception {exc.status_code}: {exc.detail}")
+    
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "status": "error",
+            "message": exc.detail,
+            "request_path": request.url.path
+        }
+    )
+
+
+# Handle all other unhandled exceptions (fallback)
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """
+    Centralized exception handler for all unhandled exceptions (non-HTTP).
+    
+    Only catches exceptions that are NOT HTTPException.
+    Provides consistent error response format with:
+    - User-friendly message
+    - Error type for debugging
+    - Request context logging
+    """
+    error_type = type(exc).__name__
+    error_message = str(exc)
+    
+    logger.error(f"Unhandled exception: {error_type}: {error_message}", exc_info=exc)
+    
+    return JSONResponse(
+        status_code=500,
+        content={
+            "status": "error",
+            "error_type": error_type,
+            "message": error_message if error_message else "Internal server error",
+            "request_path": request.url.path
+        }
+    )
+
+# =====================================================
 # API ROUTER
 # =====================================================
 api_router = APIRouter(prefix="/api")
+
+# =====================================================
+# HELPER: MAPPING CONFIRMATION CHECKER
+# =====================================================
+def check_mapping_confirmed(dataset_id: str) -> dict:
+    """
+    Verify that column mapping has been confirmed for a dataset.
+    
+    Loads upload_metadata.json and checks column_mapping_confirmed flag.
+    
+    Raises HTTPException(400) if not confirmed.
+    
+    Returns metadata dict if confirmed.
+    """
+    try:
+        dpath = datasetdir(dataset_id)
+        metadata_path = os.path.join(dpath, "upload_metadata.json")
+        
+        if not os.path.exists(metadata_path):
+            raise HTTPException(
+                404,
+                f"Upload metadata not found for dataset {dataset_id}. Please upload a dataset first."
+            )
+        
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        
+        # Check confirmation status
+        if not metadata.get("column_mapping_confirmed", False):
+            raise HTTPException(
+                400,
+                "Column mapping not confirmed. Please confirm the mapping in the Upload page before proceeding."
+            )
+        
+        return metadata
+    
+    except HTTPException:
+        raise  # Re-raise HTTP exceptions
+    except Exception as e:
+        logger.error(f"Error checking mapping confirmation for {dataset_id}: {str(e)}", exc_info=e)
+        raise HTTPException(500, f"Error checking mapping confirmation: {str(e)}")
 
 # =====================================================
 # TEST ROUTE
@@ -48,6 +148,31 @@ def test():
 # =====================================================
 @api_router.post("/upload")
 async def upload(file: UploadFile = File(...)):
+    """
+    Upload and process a CSV file with industrial-grade validation.
+    
+    Supports:
+    - Encoding detection (charset-normalizer)
+    - Column normalization with mapping
+    - Type inference and coercion
+    - File size validation (500MB max)
+    - Dimension validation (500 cols, 100k rows max)
+    - Sample-based reading for memory efficiency
+    
+    Returns:
+        {
+            "status": "ok",
+            "dataset_id": str,
+            "rows": int,
+            "is_sampled": bool,
+            "sample_limit": int,
+            "columns": [str],
+            "column_mapping": {original: normalized},
+            "encoding": {"detected": str, "confidence": float, "detection_method": str},
+            "coercion_summary": {col: {type, coercions, method}},
+            "preview": [dict]
+        }
+    """
     if not file.filename.lower().endswith(".csv"):
         raise HTTPException(400, "Only CSV files allowed")
 
@@ -69,17 +194,82 @@ async def upload(file: UploadFile = File(...)):
         return safe({
             "status": "ok",
             "dataset_id": result["dataset_id"],
+            "rows": result.get("rows", 0),
+            "is_sampled": result.get("is_sampled", False),
+            "sample_limit": result.get("sample_limit", 100000),
             "columns": result["columns"],
+            "column_mapping": result.get("column_mapping", {}),
+            "encoding": result.get("encoding", {"detected": "utf-8", "confidence": 0, "detection_method": "unknown"}),
+            "coercion_summary": result.get("coercion_summary", {}),
             "preview": preview,
         })
+    except HTTPException as he:
+        # Re-raise HTTP exceptions from ingest module
+        raise he
     except Exception as e:
+        logger.error(f"Upload failed: {str(e)}", exc_info=e)
         raise HTTPException(500, f"Upload failed: {str(e)}")
+
+# =====================================================
+# UPLOAD CONFIRMATION (Column Mapping)
+# =====================================================
+@api_router.post("/datasets/{dataset_id}/confirm-mapping")
+def confirm_column_mapping(dataset_id: str):
+    """
+    Record that user has confirmed the column name mappings.
+    
+    Updates upload_metadata.json with:
+    - column_mapping_confirmed: true
+    - confirmation_timestamp: ISO timestamp
+    
+    This creates an audit trail for data governance.
+    """
+    try:
+        dpath = datasetdir(dataset_id)
+        metadata_path = os.path.join(dpath, "upload_metadata.json")
+        
+        if not os.path.exists(metadata_path):
+            raise HTTPException(404, f"Upload metadata not found for dataset {dataset_id}")
+        
+        # Load existing metadata
+        with open(metadata_path, 'r') as f:
+            metadata = json.load(f)
+        
+        # Update confirmation status
+        metadata["column_mapping_confirmed"] = True
+        metadata["confirmation_timestamp"] = pd.Timestamp.utcnow().isoformat()
+        
+        # Save updated metadata
+        with open(metadata_path, 'w') as f:
+            json.dump(metadata, f, indent=2)
+        
+        logger.info(f"Column mapping confirmed for dataset {dataset_id}")
+        
+        return safe({
+            "status": "ok",
+            "dataset_id": dataset_id,
+            "message": "Column mapping confirmed",
+            "column_mapping_confirmed": True,
+            "confirmation_timestamp": metadata["confirmation_timestamp"]
+        })
+    
+    except Exception as e:
+        logger.error(f"Failed to confirm mapping for {dataset_id}: {str(e)}", exc_info=e)
+        raise HTTPException(500, f"Failed to confirm mapping: {str(e)}")
 
 # =====================================================
 # EDA
 # =====================================================
 @api_router.get("/eda/{dataset_id}")
 def eda(dataset_id: str):
+    """
+    Generate exploratory data analysis for dataset.
+    
+    Requires: Column mapping must be confirmed first.
+    """
+    # Verify mapping confirmation (data governance)
+    check_mapping_confirmed(dataset_id)
+    
     return safe(generate_eda(dataset_id))
 
 # =====================================================
@@ -87,6 +277,14 @@ def eda(dataset_id: str):
 # =====================================================
 @api_router.post("/datasets/{dataset_id}/clean")
 def run_etl(dataset_id: str):
+    """
+    Run ETL pipeline to clean and transform dataset.
+    
+    Requires: Column mapping must be confirmed first.
+    """
+    # Verify mapping confirmation (data governance)
+    check_mapping_confirmed(dataset_id)
+    
     result = full_etl(dataset_id)
     if result.get("status") != "ok":
         raise HTTPException(status_code=400, detail=result.get("error", "ETL failed"))
@@ -198,6 +396,14 @@ def dataset_sample(dataset_id: str, nrows: int = 5):
 # =====================================================
 @api_router.post("/train/{dataset_id}")
 def train(dataset_id: str, payload: dict):
+    """
+    Submit async training job for dataset.
+    
+    Requires: Column mapping must be confirmed first.
+    """
+    # Verify mapping confirmation (data governance)
+    check_mapping_confirmed(dataset_id)
+    
     target = payload.get("target")
     if not target:
         raise HTTPException(400, "Target column name required in payload")
@@ -242,7 +448,14 @@ def get_job_status(job_id: str):
 # =====================================================
 @api_router.post("/train/{dataset_id}/sync")
 def train_sync(dataset_id: str, payload: dict):
-    """Synchronous training for small datasets or testing"""
+    """
+    Synchronous training for small datasets or testing.
+    
+    Requires: Column mapping must be confirmed first.
+    """
+    # Verify mapping confirmation (data governance)
+    check_mapping_confirmed(dataset_id)
+    
     target = payload.get("target")
     if not target:
         raise HTTPException(400, "Target column name required in payload")
@@ -345,7 +558,7 @@ async def predict_batch(dataset_id: str, file: UploadFile = File(...)):
 # =====================================================
 # CHAT (DSL-based with RAG)
 # =====================================================
-# from backend.services.chat import get_chat_response
+from backend.services.chat import get_chat_response
 
 @api_router.post("/chat/{dataset_id}")
 def chat(dataset_id: str, payload: dict):
