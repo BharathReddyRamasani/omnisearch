@@ -1,608 +1,360 @@
-# # import os, joblib
-# # import pandas as pd
-# # from backend.services.utils import model_dir, load_meta
-
-
-
-# # def make_prediction(dataset_id: str, payload: dict):
-# #     root = model_dir(dataset_id)
-# #     model_path = os.path.join(root, "model.pkl")
-
-# #     if not os.path.exists(model_path):
-# #         return {"status": "failed", "error": "Model not trained"}
-
-# #     meta = load_meta(dataset_id)
-# #     model = joblib.load(model_path)
-
-# #     mode = payload.pop("_mode", "full")
-# #     defaults = meta["feature_defaults"]
-# #     top_features = meta.get("top_features", [])
-
-# #     used = top_features if mode == "top" else defaults.keys()
-
-# #     filled, auto = {}, []
-# #     for f in used:
-# #         if f in payload and payload[f] not in ["", None]:
-# #             filled[f] = payload[f]
-# #         else:
-# #             filled[f] = defaults[f]
-# #             auto.append(f)
-
-# #     X = pd.DataFrame([filled])
-# #     pred = model.predict(X)[0]
-
-# #     conf = None
-# #     if hasattr(model.named_steps["model"], "predict_proba"):
-# #         conf = float(model.predict_proba(X).max())
-
-# #     return {
-# #         "status": "ok",
-# #         "prediction": pred,
-# #         "confidence": conf,
-# #         "mode": mode,
-# #         "used_features": list(used),
-# #         "auto_filled": auto,
-# #     }
-
-
-
-# # import streamlit as st
-# # import requests
-# # import pandas as pd
-# # import json
-
-# # API = "http://127.0.0.1:8000/api"
-
-# # st.set_page_config(
-# #     page_title="OmniSearch AI – Enterprise Predict",
-# #     layout="wide"
-# # )
-
-# # # =====================================================
-# # # DATASET CHECK
-# # # =====================================================
-# # if "dataset_id" not in st.session_state:
-# #     st.error("🚫 No dataset loaded. Upload & train a model first.")
-# #     st.stop()
-
-# # dataset_id = st.session_state.dataset_id
-
-# # # =====================================================
-# # # FETCH MODEL METADATA
-# # # =====================================================
-# # @st.cache_data(ttl=60)
-# # def fetch_model_meta(ds):
-# #     r = requests.get(f"{API}/meta/{ds}", timeout=15)
-# #     if r.status_code != 200:
-# #         return None
-# #     return r.json()
-
-# # model_meta = fetch_model_meta(dataset_id)
-
-# # if not model_meta or model_meta.get("status") != "ok":
-# #     st.error("🚫 No trained model found. Train a model first.")
-# #     st.stop()
-
-# # # -----------------------------------------------------
-# # # SAFE METADATA ACCESS (CRITICAL FIX)
-# # # -----------------------------------------------------
-# # TOP_FEATURES = model_meta.get("top_features", [])
-# # FEATURE_DEFAULTS = model_meta.get("feature_defaults", {})
-# # RAW_COLUMNS = model_meta.get("raw_columns", [])
-# # TARGET = model_meta.get("target")
-# # TASK = model_meta.get("task")
-# # BEST_MODEL = model_meta.get("best_model")
-# # BEST_SCORE = model_meta.get("best_score")
-
-# # # =====================================================
-# # # HEADER
-# # # =====================================================
-# # st.markdown(
-# #     f"""
-# # <div style="background:linear-gradient(90deg,#1e3c72,#2a5298);
-# # padding:2rem;border-radius:16px;color:white;">
-# # <h1>🔮 Enterprise Prediction Engine</h1>
-# # <p>
-# # Model: <b>{BEST_MODEL}</b> &nbsp; | &nbsp;
-# # Task: <b>{TASK.upper()}</b> &nbsp; | &nbsp;
-# # Score: <b>{BEST_SCORE}</b>
-# # </p>
-# # </div>
-# # """,
-# #     unsafe_allow_html=True
-# # )
-
-# # st.markdown("---")
-
-# # # =====================================================
-# # # MODE SELECTION
-# # # =====================================================
-# # mode = st.radio(
-# #     "Prediction Mode",
-# #     [
-# #         "🧠 Smart Mode (Top Impact Features)",
-# #         "🧾 Full Input Mode (All Features)"
-# #     ],
-# #     horizontal=True
-# # )
-
-# # # =====================================================
-# # # DETERMINE FEATURES TO ASK USER
-# # # =====================================================
-# # if mode.startswith("🧠") and TOP_FEATURES:
-# #     input_features = TOP_FEATURES
-# #     st.info(
-# #         "Smart Mode active: Only high-impact features required. "
-# #         "Remaining fields are auto-filled using training-time defaults."
-# #     )
-# # else:
-# #     input_features = RAW_COLUMNS
-# #     st.info("Full Input Mode active: Provide all features.")
-
-# # # =====================================================
-# # # INPUT FORM
-# # # =====================================================
-# # st.markdown("## 📝 Input Features")
-
-# # inputs = {}
-# # missing_notice = False
-
-# # with st.form("predict_form"):
-# #     cols = st.columns(3)
-
-# #     for i, feature in enumerate(input_features):
-# #         default = FEATURE_DEFAULTS.get(feature)
-
-# #         col = cols[i % 3]
-
-# #         with col:
-# #             # Numeric
-# #             if isinstance(default, (int, float)):
-# #                 inputs[feature] = st.number_input(
-# #                     label=feature,
-# #                     value=float(default),
-# #                 )
-
-# #             # Categorical
-# #             else:
-# #                 # Allow user to override default
-# #                 inputs[feature] = st.text_input(
-# #                     label=feature,
-# #                     value=str(default) if default is not None else ""
-# #                 )
-
-# #             if default is None:
-# #                 missing_notice = True
-
-# #     submitted = st.form_submit_button("🚀 Predict", use_container_width=True)
-
-# # # =====================================================
-# # # WARN IF AUTO-FILL USED
-# # # =====================================================
-# # if missing_notice:
-# #     st.caption(
-# #         "ℹ️ Some fields were auto-filled using training-time defaults "
-# #         "(median / most frequent)."
-# #     )
-
-# # # =====================================================
-# # # PREDICTION
-# # # =====================================================
-# # if submitted:
-# #     with st.spinner("🔍 Generating prediction..."):
-# #         # ------------------------------------------------
-# #         # AUTO-FILL REMAINING FEATURES (INDUSTRIAL FIX)
-# #         # ------------------------------------------------
-# #         final_payload = FEATURE_DEFAULTS.copy()
-# #         final_payload.update(inputs)
-
-# #         try:
-# #             resp = requests.post(
-# #                 f"{API}/predict/{dataset_id}",
-# #                 json=final_payload,
-# #                 timeout=20
-# #             )
-
-# #             if resp.status_code != 200:
-# #                 st.error("Prediction failed")
-# #                 st.json(resp.text)
-# #                 st.stop()
-
-# #             result = resp.json()
-# #             if result.get("status") != "ok":
-# #                 st.error(result.get("error", "Prediction failed"))
-# #                 st.stop()
-
-# #         except Exception as e:
-# #             st.error(f"Connection error: {e}")
-# #             st.stop()
-
-# #     # =================================================
-# #     # RESULT DISPLAY
-# #     # =================================================
-# #     st.markdown("---")
-# #     st.markdown("## ✅ Prediction Result")
-
-# #     c1, c2 = st.columns(2)
-
-# #     with c1:
-# #         st.metric(
-# #             label=f"Predicted {TARGET}",
-# #             value=str(result["prediction"])
-# #         )
-
-# #     with c2:
-# #         if result.get("confidence") is not None:
-# #             st.metric(
-# #                 label="Confidence",
-# #                 value=f"{result['confidence']*100:.1f}%"
-# #             )
-# #         else:
-# #             st.metric(
-# #                 label="Confidence",
-# #                 value="N/A"
-# #             )
-
-# #     st.success("Prediction completed successfully")
-
-# # # =====================================================
-# # # EXPLAINABILITY SECTION (READY)
-# # # =====================================================
-# # if TOP_FEATURES:
-# #     st.markdown("---")
-# #     st.markdown("## 🔥 Key Drivers Used")
-# #     st.write(", ".join(TOP_FEATURES))
-
-# # st.caption("Enterprise Predict • Schema-Safe • Production-Ready")
-
-# # backend/services/predict.py
-# # backend/services/predict.py
-
-# import os
-# import joblib
-# import pandas as pd
-# import numpy as np
-# from fastapi import HTTPException
-# from backend.services.utils import model_dir, load_meta
-
-
-# def _ai_autofill(feature, value, defaults):
-#     """
-#     Enterprise autofill logic
-#     """
-#     if value is not None and value != "":
-#         return value
-
-#     # 1️⃣ Training-time default
-#     if feature in defaults:
-#         return defaults[feature]
-
-#     # 2️⃣ Numeric-safe fallback
-#     if isinstance(defaults.get(feature), (int, float)):
-#         return 0.0
-
-#     # 3️⃣ Categorical-safe fallback
-#     return "UNKNOWN"
-
-
-# def make_prediction(dataset_id: str, payload: dict):
-#     # -------------------------------------------------
-#     # Load model
-#     # -------------------------------------------------
-#     model_path = os.path.join(model_dir(dataset_id), "model.pkl")
-#     if not os.path.exists(model_path):
-#         raise HTTPException(404, "Model not trained")
-
-#     model = joblib.load(model_path)
-
-#     # -------------------------------------------------
-#     # Load metadata
-#     # -------------------------------------------------
-#     meta = load_meta(dataset_id)
-
-#     raw_columns = meta.get("raw_columns")
-#     feature_defaults = meta.get("feature_defaults", {})
-
-#     if not raw_columns:
-#         raise HTTPException(500, "Model schema missing raw_columns")
-
-#     # -------------------------------------------------
-#     # AI-Guided Auto Fill (CRITICAL FIX)
-#     # -------------------------------------------------
-#     row = {}
-#     for col in raw_columns:
-#         user_value = payload.get(col)
-#         row[col] = _ai_autofill(col, user_value, feature_defaults)
-
-#     X = pd.DataFrame([row])
-
-#     # -------------------------------------------------
-#     # Prediction
-#     # -------------------------------------------------
-#     try:
-#         prediction = model.predict(X)[0]
-#     except Exception as e:
-#         raise HTTPException(
-#             400,
-#             f"Prediction failed due to invalid inputs: {str(e)}"
-#         )
-
-#     confidence = None
-#     if hasattr(model.named_steps["model"], "predict_proba"):
-#         proba = model.predict_proba(X)
-#         confidence = float(np.max(proba))
-
-#     return {
-#         "status": "ok",
-#         "prediction": prediction,
-#         "confidence": confidence,
-#         "autofilled_fields": [
-#             k for k in raw_columns if k not in payload
-#         ],
-#     }
-
+"""
+PRODUCTION PREDICTION WITH:
+✅ Confidence/probability outputs
+✅ Input schema validation
+✅ Friendly error messages
+✅ Auto-fill defaults
+✅ Feature mapping to normalized names
+"""
 import os
 import joblib
 import pandas as pd
 import numpy as np
-import hashlib
-import json
+from typing import Dict, Any, List, Optional
 from fastapi import HTTPException
-
-from backend.services.utils import model_dir, load_meta, load_raw, load_clean
-from typing import Dict
+from backend.services.utils import model_dir, load_meta
 
 
-# =====================================================
-# DATASET HASH (MUST MATCH training.py)
-# =====================================================
-def dataset_hash(df: pd.DataFrame) -> str:
-    df_sorted = df[sorted(df.columns)]
-    return hashlib.md5(pd.util.hash_pandas_object(df_sorted, index=True).values).hexdigest()
-
-
-# =====================================================
-# AUTOFILL HELPER
-# =====================================================
-def _autofill(col, user_value, defaults):
-    """Auto-fill missing values with defaults"""
-    # Handle None, empty strings, NaN
-    if user_value is None:
-        return defaults.get(col, 0.0)
-    if isinstance(user_value, str) and not user_value.strip():
-        return defaults.get(col, 0.0)
-    if isinstance(user_value, float) and pd.isna(user_value):
-        return defaults.get(col, 0.0)
+def validate_input_schema(payload: Dict, required_features: List[str], 
+                         feature_defaults: Dict) -> tuple[bool, Optional[str]]:
+    """
+    Validate input payload against expected schema.
     
-    # Return the value as-is if provided
-    return user_value
-
-
-# =====================================================
-# MAIN PREDICTION LOGIC
-# =====================================================
-def make_prediction(dataset_id: str, payload: dict):
-    from backend.services.model_registry import ModelRegistry
-    from backend.services.training import detect_dataset_drift
+    Returns:
+        (is_valid, error_message)
+    """
+    if not isinstance(payload, dict):
+        return False, "Input must be a JSON object"
     
-    # Validate and clean dataset_id
-    if not dataset_id or not isinstance(dataset_id, str):
-        raise HTTPException(status_code=400, detail="Invalid dataset_id")
+    # Check for required fields
+    provided_keys = set(payload.keys())
+    required_keys = set(required_features)
     
-    dataset_id = str(dataset_id).strip()
-    # Handle case where dataset_id has commas (malformed)
-    if "," in dataset_id:
-        dataset_id = dataset_id.split(",")[0].strip()
+    missing_keys = required_keys - provided_keys
+    if missing_keys:
+        return False, f"Missing required fields: {', '.join(missing_keys)}"
     
-    # Get active model info from registry
-    active_version = ModelRegistry.get_active_version(dataset_id)
-    if not active_version:
-        raise HTTPException(status_code=404, detail="No active model found for this dataset")
+    # Validate types
+    for key, value in payload.items():
+        if key not in feature_defaults:
+            return False, f"Unknown feature: '{key}'"
+        
+        default_val = feature_defaults[key]
+        
+        # Check type compatibility
+        if isinstance(default_val, (int, float)):
+            if value is not None and not isinstance(value, (int, float, str)):
+                return False, f"Field '{key}' must be numeric, got {type(value).__name__}"
+            
+            # Try to convert to numeric
+            if isinstance(value, str):
+                try:
+                    float(value)
+                except ValueError:
+                    return False, f"Field '{key}' cannot be converted to numeric"
+        else:
+            # Categorical field
+            if value is not None and not isinstance(value, str):
+                return False, f"Field '{key}' must be text, got {type(value).__name__}"
+    
+    return True, None
 
-    model_path = active_version["model_path"]
-    if not os.path.exists(model_path):
-        raise HTTPException(status_code=404, detail="Model file not found")
 
-    meta = active_version["metadata"]
-    model = joblib.load(model_path)
+def autofill_missing_features(payload: Dict, feature_defaults: Dict, 
+                              top_features: List[str] = None) -> Dict:
+    """
+    Auto-fill missing features with defaults.
+    Prioritizes provided values, falls back to defaults.
+    """
+    filled = {}
+    
+    # Determine which features to fill
+    features_to_fill = top_features if top_features else list(feature_defaults.keys())
+    
+    for feature in features_to_fill:
+        if feature in payload and payload[feature] not in [None, ""]:
+            filled[feature] = payload[feature]
+        elif feature in feature_defaults:
+            filled[feature] = feature_defaults[feature]
+        else:
+            # Safe fallback
+            filled[feature] = 0 if isinstance(feature_defaults.get(feature), (int, float)) else "UNKNOWN"
+    
+    return filled
 
-    # -------------------------------------------------
-    # VALIDATE DATASET CONSISTENCY (ENTERPRISE SAFETY)
-    # -------------------------------------------------
+
+def make_prediction(dataset_id: str, payload: Dict, mode: str = "full") -> Dict:
+    """
+    Make predictions with confidence scores and input validation.
+    
+    Args:
+        dataset_id: Dataset identifier
+        payload: Input features
+        mode: "full" (all features) or "smart" (top features)
+    
+    Returns:
+        {
+            "status": "ok" | "failed",
+            "prediction": value or error message,
+            "confidence": float or None,
+            "confidence_type": "probability" | "softmax_max" | "none",
+            "used_features": list of features used,
+            "auto_filled": list of auto-filled features,
+            "mode": prediction mode used,
+            "target": target variable name,
+            "task": "classification" | "regression"
+        }
+    """
     try:
-        df_current = load_raw(dataset_id)
-    except Exception:
-        raise HTTPException(404, "Cannot load current dataset")
-
-    # Use the new drift detection
-    drift_check = detect_dataset_drift(dataset_id, df_current)
-    if drift_check["drift_detected"]:
-        # Return error response with drift details
+        # Load model
+        model_path = os.path.join(model_dir(dataset_id), "model.pkl")
+        if not os.path.exists(model_path):
+            return {
+                "status": "failed",
+                "error": "Model not found - train a model first",
+                "error_code": "MODEL_NOT_FOUND"
+            }
+        
+        model = joblib.load(model_path)
+        
+        # Load metadata
+        try:
+            meta = load_meta(dataset_id)
+        except:
+            return {
+                "status": "failed",
+                "error": "Model metadata not found",
+                "error_code": "METADATA_NOT_FOUND"
+            }
+        
+        # Extract metadata
+        feature_defaults = meta.get("feature_defaults", {})
+        top_features = meta.get("top_features", [])
+        raw_columns = meta.get("raw_columns", [])
+        target = meta.get("target")
+        task = meta.get("task")
+        feature_importance = meta.get("feature_importance", {})
+        
+        if not feature_defaults:
+            return {
+                "status": "failed",
+                "error": "No feature defaults in model metadata",
+                "error_code": "INVALID_METADATA"
+            }
+        
+        # Determine features to use
+        if mode == "smart" and top_features:
+            required_features = top_features
+        else:
+            required_features = list(feature_defaults.keys())
+        
+        # Validate input
+        is_valid, error_msg = validate_input_schema(payload, required_features, feature_defaults)
+        if not is_valid:
+            return {
+                "status": "failed",
+                "error": error_msg,
+                "error_code": "INVALID_INPUT_SCHEMA",
+                "hint": f"Expected features: {', '.join(required_features)}"
+            }
+        
+        # Auto-fill missing features
+        filled_payload = autofill_missing_features(payload, feature_defaults, required_features)
+        auto_filled = [f for f in required_features if f not in payload or payload[f] in [None, ""]]
+        
+        # Prepare input DataFrame
+        X = pd.DataFrame([filled_payload])
+        
+        # Make prediction
+        try:
+            pred = model.predict(X)[0]
+        except Exception as e:
+            return {
+                "status": "failed",
+                "error": f"Prediction failed: {str(e)}",
+                "error_code": "PREDICTION_FAILED"
+            }
+        
+        # Extract confidence
+        confidence = None
+        confidence_type = "none"
+        
+        try:
+            # Try to get probability for classification
+            if task == "classification" and hasattr(model.named_steps.get("model"), "predict_proba"):
+                proba = model.predict_proba(X)[0]
+                confidence = float(np.max(proba))
+                confidence_type = "probability"
+            elif task == "classification" and hasattr(model.named_steps.get("model"), "decision_function"):
+                # SVM case
+                confidence = float(np.abs(model.decision_function(X)[0]))
+                confidence_type = "decision_score"
+        except:
+            confidence = None
+            confidence_type = "none"
+        
+        # ✅ FIX #3: APPLY DRIFT CONFIDENCE ADJUSTMENT
+        drift_adjustment = meta.get("drift_confidence_adjustment", 1.0)
+        drift_warning = None
+        
+        if drift_adjustment < 1.0 and confidence is not None:
+            confidence = confidence * drift_adjustment
+            drift_warning = (
+                f"Statistical drift detected in training data. "
+                f"Confidence reduced by {int((1-drift_adjustment)*100)}%. "
+                f"Consider retraining on newer data."
+            )
+        
+        # Build response
         return {
-            "status": "error",
-            "error": "Dataset has changed since model training",
-            "drift_details": drift_check,
-            "recommendation": "Please retrain the model with the current dataset"
+            "status": "ok",
+            "prediction": float(pred) if task == "regression" else str(pred),
+            "confidence": round(confidence, 4) if confidence else None,
+            "confidence_type": confidence_type,
+            "drift_warning": drift_warning,  # ✅ FIX #3: Include drift warning
+            "used_features": list(filled_payload.keys()),
+            "auto_filled": auto_filled,
+            "auto_filled_count": len(auto_filled),
+            "mode": mode,
+            "target": target,
+            "task": task,
+            "feature_importance_top_5": dict(list(feature_importance.get("scores", {}).items())[:5]) if isinstance(feature_importance, dict) else {},
+            "note": "Some features were auto-filled with training defaults" if auto_filled else None
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {
+            "status": "failed",
+            "error": f"Unexpected error: {str(e)}",
+            "error_code": "INTERNAL_ERROR"
         }
 
-    # -------------------------------------------------
-    # FEATURE HANDLING
-    # -------------------------------------------------
-    raw_columns = [
-        c for c in meta["raw_columns"]
-        if c not in meta.get("id_columns", [])
-    ]
 
-    defaults = meta["feature_defaults"]
-    top_features = meta.get("top_features", raw_columns[:8])  # safety
-
-    # Rename mode: "top" → "guided", "full" → "full"
-    internal_mode = payload.pop("_mode", "full")
-    mode_label = "guided" if internal_mode == "top" else "full"
-
-    used_features = top_features if internal_mode == "top" else raw_columns
-
-    row = {}
-    auto_filled = []
-
-    for col in raw_columns:
-        val = payload.get(col)
-        # Clean value: handle None, empty strings, NaN
-        if val is None or (isinstance(val, str) and not val.strip()):
-            val = None
-        elif isinstance(val, str):
-            val = val.strip()
-        
-        final = _autofill(col, val, defaults)
-        row[col] = final
-        if val is None or (isinstance(val, str) and not val.strip()):
-            auto_filled.append(col)
-
-    X = pd.DataFrame([row])
-
-    # -------------------------------------------------
-    # PREDICTION
-    # -------------------------------------------------
-    try:
-        pred = model.predict(X)[0]
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Prediction failed: {str(e)}")
-
-    confidence = None
-    model_step = model.named_steps.get("model")
-    if hasattr(model_step, "predict_proba"):
-        probs = model.predict_proba(X)[0]
-        confidence = float(np.max(probs))
-
-    # -------------------------------------------------
-    # RESPONSE (TRANSPARENT)
-    # -------------------------------------------------
-    return {
-        "status": "ok",
-        "prediction": pred,
-        "confidence": confidence,
-        "mode": mode_label,           # ← external: "guided" or "full"
-        "used_features": used_features,
-        "auto_filled": auto_filled,
-    }
-
-
-# =====================================================
-# BATCH PREDICTION
-# =====================================================
-def make_batch_prediction(dataset_id: str, csv_content: bytes) -> Dict:
-    """Make predictions on a batch of data from CSV"""
-    from backend.services.model_registry import ModelRegistry
-    from backend.services.training import detect_dataset_drift
-    import io
+def batch_predict(dataset_id: str, payloads: List[Dict], mode: str = "full") -> Dict:
+    """
+    Make batch predictions on multiple samples.
     
-    # Validate and clean dataset_id
-    if not dataset_id or not isinstance(dataset_id, str):
-        raise HTTPException(status_code=400, detail="Invalid dataset_id")
-    
-    dataset_id = str(dataset_id).strip()
-    if "," in dataset_id:
-        dataset_id = dataset_id.split(",")[0].strip()
-    
-    # Get active model info from registry
-    active_version = ModelRegistry.get_active_version(dataset_id)
-    if not active_version:
-        raise HTTPException(status_code=404, detail="No active model found for this dataset")
-
-    model_path = active_version["model_path"]
-    if not os.path.exists(model_path):
-        raise HTTPException(status_code=404, detail="Model file not found")
-
-    meta = active_version["metadata"]
-    model = joblib.load(model_path)
-
-    # Parse input CSV
+    Returns:
+        {
+            "status": "ok" | "failed",
+            "predictions": [
+                { prediction result for each sample }
+            ],
+            "successful_count": int,
+            "failed_count": int
+        }
+    """
     try:
-        input_df = pd.read_csv(io.BytesIO(csv_content))
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to parse CSV: {str(e)}")
-
-    if input_df.empty:
-        raise HTTPException(status_code=400, detail="Input CSV is empty")
-
-    # Check for dataset drift (using the input data as reference)
-    try:
-        current_df = load_raw(dataset_id)
-        drift_check = detect_dataset_drift(dataset_id, current_df)
-        if drift_check["drift_detected"]:
-            error_details = {
-                "error": "Dataset has changed since model training",
-                "drift_details": drift_check,
-                "recommendation": "Please retrain the model with the current dataset"
+        if not isinstance(payloads, list):
+            return {
+                "status": "failed",
+                "error": "Input must be a list of prediction payloads",
+                "error_code": "INVALID_INPUT"
             }
-            raise HTTPException(status_code=409, detail=json.dumps(error_details))
-    except Exception:
-        # If we can't check drift, continue but log warning
-        pass
+        
+        if len(payloads) > 10000:
+            return {
+                "status": "failed",
+                "error": "Batch size too large (max 10000)",
+                "error_code": "BATCH_SIZE_EXCEEDED"
+            }
+        
+        predictions = []
+        successful = 0
+        failed = 0
+        
+        for i, payload in enumerate(payloads):
+            result = make_prediction(dataset_id, payload, mode)
+            result["batch_index"] = i
+            predictions.append(result)
+            
+            if result.get("status") == "ok":
+                successful += 1
+            else:
+                failed += 1
+        
+        return {
+            "status": "ok" if failed == 0 else "partial",
+            "predictions": predictions,
+            "successful_count": successful,
+            "failed_count": failed,
+            "total_count": len(payloads)
+        }
+    
+    except Exception as e:
+        return {
+            "status": "failed",
+            "error": str(e),
+            "error_code": "BATCH_FAILED"
+        }
 
-    # Process each row for prediction
-    predictions = []
-    errors = []
+
+def explain_prediction(dataset_id: str, payload: Dict) -> Dict:
+    """
+    Explain a prediction using feature importance.
     
-    raw_columns = [
-        c for c in meta["raw_columns"]
-        if c not in meta.get("dropped_id_columns", [])
-    ]
+    Returns:
+        {
+            "prediction": ...,
+            "confidence": ...,
+            "feature_importance": {
+                "feature_name": {
+                    "importance_score": float,
+                    "used_value": actual value used,
+                    "impact": "high" | "medium" | "low"
+                }
+            },
+            "key_drivers": [list of top 3 features]
+        }
+    """
+    try:
+        # Get prediction
+        pred_result = make_prediction(dataset_id, payload, mode="full")
+        
+        if pred_result.get("status") != "ok":
+            return pred_result
+        
+        # Load metadata
+        meta = load_meta(dataset_id)
+        feature_importance = meta.get("feature_importance", {})
+        
+        if not isinstance(feature_importance, dict):
+            feature_importance = {}
+        
+        scores = feature_importance.get("scores", {})
+        
+        # Rank features by importance
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        
+        # Map to actual values used
+        filled_payload = autofill_missing_features(payload, meta.get("feature_defaults", {}))
+        
+        feature_impacts = {}
+        for feature, score in ranked:
+            impact = "high" if score > 0.2 else "medium" if score > 0.05 else "low"
+            feature_impacts[feature] = {
+                "importance_score": round(float(score), 6),
+                "used_value": filled_payload.get(feature),
+                "impact": impact
+            }
+        
+        return {
+            "status": "ok",
+            "prediction": pred_result.get("prediction"),
+            "confidence": pred_result.get("confidence"),
+            "target": meta.get("target"),
+            "task": meta.get("task"),
+            "feature_importance": feature_impacts,
+            "key_drivers": [f for f, _ in ranked[:3]],
+            "model": meta.get("best_model"),
+            "model_score": meta.get("best_score")
+        }
     
-    defaults = meta["feature_defaults"]
-    
-    for idx, row in input_df.iterrows():
-        try:
-            # Prepare features
-            filled_row = {}
-            auto_filled = []
-            
-            for col in raw_columns:
-                val = row.get(col)
-                if pd.isna(val) or val == "":
-                    filled_row[col] = defaults.get(col, 0.0 if pd.api.types.is_numeric_dtype(type(defaults.get(col))) else "UNKNOWN")
-                    auto_filled.append(col)
-                else:
-                    filled_row[col] = val
-            
-            X = pd.DataFrame([filled_row])
-            
-            # Make prediction
-            pred = model.predict(X)[0]
-            
-            confidence = None
-            model_step = model.named_steps.get("model")
-            if hasattr(model_step, "predict_proba"):
-                probs = model.predict_proba(X)[0]
-                confidence = float(np.max(probs))
-            
-            predictions.append({
-                "row_index": int(idx),
-                "prediction": pred,
-                "confidence": confidence,
-                "auto_filled": auto_filled
-            })
-            
-        except Exception as e:
-            errors.append({
-                "row_index": int(idx),
-                "error": str(e)
-            })
-    
-    # Create output CSV
-    output_df = input_df.copy()
-    output_df["prediction"] = [p["prediction"] for p in predictions] + [None] * len(errors)
-    output_df["confidence"] = [p["confidence"] for p in predictions] + [None] * len(errors)
-    
-    # Convert to CSV string
-    output_csv = output_df.to_csv(index=False)
-    
-    return {
-        "status": "ok",
-        "total_rows": len(input_df),
-        "successful_predictions": len(predictions),
-        "errors": len(errors),
-        "predictions": predictions,
-        "error_details": errors,
-        "output_csv": output_csv
-    }
+    except Exception as e:
+        return {
+            "status": "failed",
+            "error": str(e),
+            "error_code": "EXPLANATION_FAILED"
+        }

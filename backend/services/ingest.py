@@ -406,6 +406,22 @@ async def process_upload(file: UploadFile) -> Dict[str, Any]:
     with open(os.path.join(dpath, "schema.json"), "w") as f:
         json.dump(schema, f, indent=2)
     
+    # ✅ DETECT ID COLUMNS EARLY (prevents later data leakage)
+    id_columns = []
+    suspicious_names = {"id", "uuid", "key", "code", "guid", "pk", "primary_key"}
+    for col in df.columns:
+        col_lower = col.lower()
+        # Check if column name suggests ID
+        is_suspicious_name = (col_lower in suspicious_names or 
+                             col_lower.endswith("_id") or 
+                             col_lower.endswith("_uuid") or
+                             col_lower.endswith("_key"))
+        # Check if values are unique (>99% cardinality)
+        is_highly_unique = df[col].nunique() >= len(df) * 0.99
+        
+        if is_suspicious_name and is_highly_unique:
+            id_columns.append(col)
+    
     # Save upload metadata
     # Save upload metadata (DATA GOVERNANCE SAFE)
     upload_metadata = {
@@ -436,6 +452,9 @@ async def process_upload(file: UploadFile) -> Dict[str, Any]:
     
         "column_mapping": col_mapping,
         "type_coercion": coercion_report,
+        
+        # ✅ ID COLUMN EXCLUSION LIST (prevent data leakage at training time)
+        "detected_id_columns": id_columns,
     
         # Governance control
         "column_mapping_confirmed": False
@@ -454,6 +473,7 @@ async def process_upload(file: UploadFile) -> Dict[str, Any]:
         "is_sampled": len(df) >= MAX_ROWS_SAMPLE,
         "sample_limit": MAX_ROWS_SAMPLE,
         "column_mapping": col_mapping,  # NEW: Original → Normalized mapping
+        "detected_id_columns": id_columns,  # ✅ ID columns detected at ingest time
         "encoding": {
             "detected": encoding,
             "confidence": confidence,
