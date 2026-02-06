@@ -1,0 +1,217 @@
+{
+  "golden_tests": [
+    {
+      "id": "test_001",
+      "category": "describe",
+      "query": "Tell me about this dataset",
+      "expected_action": "describe",
+      "description": "Basic dataset overview query"
+    },
+    {
+      "id": "test_002",
+      "category": "aggregate",
+      "query": "What is the average price?",
+      "expected_action": "aggregate",
+      "expected_columns": ["price"],
+      "expected_metrics": {"price": "mean"},
+      "description": "Simple aggregate with mean"
+    },
+    {
+      "id": "test_003",
+      "category": "aggregate",
+      "query": "Show me the total revenue",
+      "expected_action": "aggregate",
+      "expected_columns": ["revenue"],
+      "expected_metrics": {"revenue": "sum"},
+      "description": "Aggregate with sum metric"
+    },
+    {
+      "id": "test_004",
+      "category": "groupby",
+      "query": "How do sales vary by region?",
+      "expected_action": "groupby",
+      "expected_group_by": ["region"],
+      "description": "Groupby detecting relationship language"
+    },
+    {
+      "id": "test_005",
+      "category": "groupby",
+      "query": "Average price by product category",
+      "expected_action": "groupby",
+      "expected_group_by": ["category"],
+      "expected_metrics": {"price": "mean"},
+      "description": "Groupby with explicit metric"
+    },
+    {
+      "id": "test_006",
+      "category": "distribution",
+      "query": "What is the distribution of customer age?",
+      "expected_action": "distribution",
+      "expected_column": "age",
+      "description": "Distribution analysis"
+    },
+    {
+      "id": "test_007",
+      "category": "correlation",
+      "query": "Show me the correlation between price and quantity",
+      "expected_action": "correlation",
+      "expected_columns": ["price", "quantity"],
+      "description": "Correlation between two columns"
+    },
+    {
+      "id": "test_008",
+      "category": "model_info",
+      "query": "What is the model accuracy?",
+      "expected_action": "model_info",
+      "description": "Model metadata retrieval"
+    },
+    {
+      "id": "test_009",
+      "category": "safety",
+      "query": "Predict next month's sales",
+      "expected_action": "unsupported",
+      "description": "Reject future prediction"
+    },
+    {
+      "id": "test_010",
+      "category": "safety",
+      "query": "Why did customers leave?",
+      "expected_action": "unsupported",
+      "description": "Reject causal inference claim"
+    },
+    {
+      "id": "test_011",
+      "category": "clarity",
+      "query": "Show me sales by region",
+      "expected_action": "groupby",
+      "description": "Potential clarification: which sales column?"
+    },
+    {
+      "id": "test_012",
+      "category": "aggregate",
+      "query": "What's the count of transactions?",
+      "expected_action": "aggregate",
+      "expected_metrics_value": "count",
+      "description": "Explicit count request"
+    },
+    {
+      "id": "test_013",
+      "category": "groupby",
+      "query": "Sales by region and product",
+      "expected_action": "groupby",
+      "expected_group_by_count": 2,
+      "description": "Multi-column groupby"
+    },
+    {
+      "id": "test_014",
+      "category": "aggregate",
+      "query": "Average salary, median bonus",
+      "expected_action": "aggregate",
+      "expected_columns_count": 2,
+      "description": "Multiple aggregation metrics"
+    },
+    {
+      "id": "test_015",
+      "category": "distribution",
+      "query": "Show distribution of product categories",
+      "expected_action": "distribution",
+      "description": "Categorical distribution"
+    }
+  ],
+  "test_scenarios": [
+    {
+      "scenario": "Cold start",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Initialize ChatOrchestrator",
+          "check": "Should load dataset schema without errors"
+        },
+        {
+          "step": 2,
+          "action": "Send first query",
+          "check": "Should return valid DSL"
+        }
+      ]
+    },
+    {
+      "scenario": "Ambiguous query",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Send ambiguous query",
+          "check": "Should return clarification_needed status"
+        },
+        {
+          "step": 2,
+          "action": "Provide clarification response",
+          "check": "Should resolve to valid DSL"
+        }
+      ]
+    },
+    {
+      "scenario": "Invalid query",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Send query requesting non-existent column",
+          "check": "Should return error status"
+        }
+      ]
+    },
+    {
+      "scenario": "Conversation history",
+      "steps": [
+        {
+          "step": 1,
+          "action": "Send first query",
+          "check": "Should process normally"
+        },
+        {
+          "step": 2,
+          "action": "Send follow-up query with history",
+          "check": "Should use context from history"
+        }
+      ]
+    }
+  ],
+  "validation_rules": [
+    {
+      "rule": "Max 4 columns",
+      "test": "Query with 5+ columns should be rejected",
+      "expected": "Validation error"
+    },
+    {
+      "rule": "Numeric metrics on numeric columns only",
+      "test": "Mean on string column should be rejected",
+      "expected": "Validation error"
+    },
+    {
+      "rule": "Column existence",
+      "test": "Query with non-existent column should be rejected",
+      "expected": "Validation error"
+    },
+    {
+      "rule": "Groupby on categorical columns preferred",
+      "test": "Groupby on numeric column should issue warning",
+      "expected": "Warning generated"
+    }
+  ],
+  "determinism_tests": [
+    {
+      "test": "Same query → Same DSL",
+      "description": "Running identical query should produce identical DSL structure",
+      "runs": 5
+    },
+    {
+      "test": "No random defaults",
+      "description": "When multiple interpretations exist, heuristic planner should choose deterministically",
+      "runs": 10
+    },
+    {
+      "test": "Consistent validation",
+      "description": "Same DSL should always produce same validation result",
+      "runs": 5
+    }
+  ]
+}

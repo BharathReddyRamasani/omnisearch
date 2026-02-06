@@ -6,7 +6,7 @@ from datetime import datetime
 import uuid
 import pandas as pd
 
-API = "http://127.0.0.1:8003"
+API = "http://127.0.0.1:8000"
 
 st.set_page_config(
     page_title="OmniSearch AI – Intelligent Chatbot",

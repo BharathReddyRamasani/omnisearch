@@ -7,7 +7,7 @@ import json
 import time
 from datetime import datetime
 
-API = "http://127.0.0.1:8003/api"
+API = "http://127.0.0.1:8000/api"
 
 st.set_page_config(
     page_title="OmniSearch AI – Industrial AutoML Training",
@@ -69,6 +69,23 @@ st.markdown(
 st.markdown("---")
 
 # =====================================================
+# WORKFLOW STATUS
+# =====================================================
+st.markdown("### 🔄 ML Pipeline Workflow")
+col_wf1, col_wf2, col_wf3, col_wf4 = st.columns(4)
+
+with col_wf1:
+    st.markdown("✅ **Upload**\nData Ingestion")
+with col_wf2:
+    st.markdown("📊 **EDA**\nExplore Data")
+with col_wf3:
+    st.markdown("🧹 **ETL**\nClean Data")
+with col_wf4:
+    st.markdown("⚡ **Train**\nBuild Models")
+
+st.markdown("---")
+
+# =====================================================
 # TABS
 # =====================================================
 tab_setup, tab_training, tab_results, tab_advanced = st.tabs([
@@ -85,10 +102,34 @@ with tab_setup:
     
     with col1:
         st.markdown("### Target Variable")
+        
+        # ✅ Filter out ID-like columns (>99% unique)
+        filterable_columns = []
+        if columns:
+            try:
+                sample_resp = requests.get(f"{API}/datasets/{dataset_id}/sample", timeout=10)
+                if sample_resp.status_code == 200:
+                    sample_data = sample_resp.json()
+                    sample_df = pd.DataFrame(sample_data)
+                    
+                    for col in columns:
+                        if col in sample_df.columns:
+                            unique_pct = sample_df[col].nunique() / len(sample_df) * 100
+                            # Exclude ID columns (>95% unique)
+                            if unique_pct < 95:
+                                filterable_columns.append(col)
+                        else:
+                            filterable_columns.append(col)
+            except:
+                filterable_columns = columns
+        
+        # Use filtered columns if available, otherwise all columns
+        target_options = filterable_columns if filterable_columns else columns
+        
         target = st.selectbox(
             "Select target column",
-            options=columns,
-            help="The column to predict. Must be numeric for regression, categorical for classification."
+            options=target_options,
+            help="The column to predict. ID/name columns (>95% unique) are excluded. Must be numeric for regression, categorical for classification."
         )
         
         # Auto-detect task
@@ -144,17 +185,82 @@ with tab_setup:
 with tab_training:
     st.markdown("## ⚡ Model Training")
     
+    # ✅ CHECK: Verify clean data exists before training
+    clean_data_available = False
+    try:
+        check_resp = requests.get(f"{API}/datasets/{dataset_id}/download/clean", timeout=10)
+        clean_data_available = check_resp.status_code == 200
+    except:
+        clean_data_available = False
+    
+    if not clean_data_available:
+        st.warning(
+            """
+            ⚠️ **Clean data not available** - Training requires cleaned data to prevent data leakage.
+            
+            **Please follow the workflow:**
+            1. 📊 **EDA** - Analyze your raw data
+            2. 🧹 **ETL** - Clean and prepare your data
+            3. ⚡ **Train** - Train models on clean data
+            
+            After completing ETL, come back here to train your models.
+            """
+        )
+        st.info("💡 Go to the **ETL** page to clean your data first.")
+    else:
+        st.success("✅ Clean data available - Ready to train!")
+    
+    st.markdown("---")
+    
     # Training button
     col1, col2 = st.columns([3, 1])
     
     with col1:
-        if st.button("🚀 Start Industrial Training", type="primary", use_container_width=True):
+        if st.button("🚀 Start Industrial Training", type="primary", use_container_width=True, disabled=not clean_data_available):
+            if not clean_data_available:
+                st.error("❌ Cannot train: Clean data not available. Please run ETL first.")
+                st.stop()
+            
+            # ✅ PRE-FLIGHT VALIDATION
+            # Check that target is valid and not an ID column
+            if not target:
+                st.error("❌ Target variable not selected. Please choose a target column.")
+                st.stop()
+            
+            if target not in columns:
+                st.error(f"❌ Target '{target}' not found in dataset columns.")
+                st.stop()
+            
+            # Validate target is not an ID column (>95% unique)
+            try:
+                sample_resp = requests.get(f"{API}/datasets/{dataset_id}/sample", timeout=10)
+                if sample_resp.status_code == 200:
+                    sample_data = sample_resp.json()
+                    sample_df = pd.DataFrame(sample_data)
+                    if target in sample_df.columns:
+                        unique_pct = sample_df[target].nunique() / len(sample_df) * 100
+                        if unique_pct > 95:
+                            st.error(f"❌ Invalid target: '{target}' has {unique_pct:.1f}% unique values (looks like an ID column). Please select a different column.")
+                            st.stop()
+            except:
+                pass
+            
+            # ✅ Determine task based on target variable
+            # If both regression and classification are selected, auto-detect
+            # If only one is selected, use that
+            task = None  # Auto-detect
+            
+            if train_regression and not train_classification:
+                task = "regression"
+            elif train_classification and not train_regression:
+                task = "classification"
+            # else: None (auto-detect based on target dtype)
+            
             payload = {
                 "target": target,
                 "test_size": test_size / 100,
                 "random_state": random_state,
-                "train_regression": train_regression,
-                "train_classification": train_classification
+                "task": task  # ✅ Use correct parameter name
             }
             
             progress_bar = st.progress(0)
@@ -238,9 +344,35 @@ with tab_training:
                                 break
                             
                             elif job_status == "failed":
-                                st.error(f"Training failed: {job_data.get('message', 'Unknown error')}")
-                                if job_data.get("error"):
-                                    st.error(f"Error details: {job_data.get('error')}")
+                                st.error(f"❌ Training failed: {job_data.get('message', 'Unknown error')}")
+                                
+                                error_details = job_data.get("error") or job_data.get("details", "")
+                                error_code = job_data.get("error_code")
+                                recommendation = job_data.get("recommendation")
+                                workflow_steps = job_data.get("workflow_steps", [])
+                                
+                                if error_code == "CLEAN_DATA_REQUIRED":
+                                    st.warning(
+                                        """
+                                        ⚠️ **Clean Data Required**
+                                        
+                                        Training requires cleaned data to prevent data leakage.
+                                        """
+                                    )
+                                    if workflow_steps:
+                                        st.markdown("**Required Workflow Steps:**")
+                                        for step in workflow_steps:
+                                            st.markdown(f"- {step}")
+                                    if recommendation:
+                                        st.info(f"💡 {recommendation}")
+                                    
+                                    st.markdown("**Next Step:** Go to **ETL** page to clean your data, then return here to train.")
+                                elif error_details:
+                                    st.error(f"Error details: {error_details}")
+                                
+                                if recommendation and error_code != "CLEAN_DATA_REQUIRED":
+                                    st.info(f"💡 {recommendation}")
+                                
                                 st.stop()
                                 break
                             
@@ -302,7 +434,16 @@ else:
             st.metric("🏆 Best Model", model_meta.get("best_model", "N/A"))
         
         with col2:
-            st.metric("📈 Best Score", f"{model_meta.get('best_score', 0):.4f}")
+            # ✅ Safe access with fallback chain
+            best_score = model_meta.get('best_score')
+            if best_score is None:
+                # Fallback to ranking_score from leaderboard
+                leaderboard = model_meta.get('leaderboard', [])
+                if leaderboard:
+                    best_score = max([m.get('ranking_score', m.get('holdout_score', 0)) for m in leaderboard], default=0)
+                else:
+                    best_score = 0
+            st.metric("📈 Best Score", f"{float(best_score):.4f}")
         
         with col3:
             st.metric("🎯 Task", model_meta.get("task", "N/A").upper())
@@ -319,34 +460,79 @@ else:
         if leaderboard:
             df_lb = pd.DataFrame(leaderboard)
             
-            # Style the dataframe
-            def highlight_best(s):
-                is_best = s.name == df_lb['score'].idxmax()
-                return ['background-color: #e6f7ff' if is_best else '' for _ in s]
+            # Handle columns: ranking_score is used for ranking, holdout_score is test performance
+            # Determine which score column to display
+            score_col = None
+            if "ranking_score" in df_lb.columns:
+                score_col = "ranking_score"
+            elif "holdout_score" in df_lb.columns:
+                score_col = "holdout_score"
+            elif "score" in df_lb.columns:
+                score_col = "score"
             
-            styled_df = df_lb.style.apply(highlight_best, axis=0).format({
-                "score": "{:.4f}",
-                "train_rows": "{:,}",
-                "test_rows": "{:,}"
-            })
+            # Style the dataframe - highlight best model
+            def highlight_best(s):
+                if score_col and score_col in df_lb.columns:
+                    is_best = s.name == df_lb[score_col].idxmax()
+                    return ['background-color: #e6f7ff' if is_best else '' for _ in s]
+                return ['' for _ in s]
+            
+            # Prepare display columns and formatting
+            display_cols = ["model"]
+            format_dict = {}
+            
+            if "ranking_score" in df_lb.columns:
+                display_cols.append("ranking_score")
+                format_dict["ranking_score"] = "{:.4f}"
+            if "holdout_score" in df_lb.columns:
+                display_cols.append("holdout_score")
+                format_dict["holdout_score"] = "{:.4f}"
+            
+            if "train_rows" in df_lb.columns:
+                display_cols.append("train_rows")
+                format_dict["train_rows"] = "{:,}"
+            if "test_rows" in df_lb.columns:
+                display_cols.append("test_rows")
+                format_dict["test_rows"] = "{:,}"
+            
+            if "training_time_seconds" in df_lb.columns:
+                display_cols.append("training_time_seconds")
+                format_dict["training_time_seconds"] = "{:.2f}"
+            
+            # Select columns to display
+            df_display = df_lb[display_cols]
+            
+            # Apply styling
+            styled_df = df_display.style.apply(highlight_best, axis=0)
+            if format_dict:
+                styled_df = styled_df.format(format_dict)
             
             st.dataframe(styled_df, use_container_width=True)
             
             # Performance comparison chart
             st.markdown("### 📊 Performance Comparison")
             
-            fig = px.bar(
-                df_lb,
-                x="model",
-                y="score",
-                color="model",
-                text="score",
-                title="Model Performance Scores",
-                labels={"model": "Algorithm", "score": "Score"}
-            )
-            fig.update_traces(texttemplate="%{text:.4f}", textposition="outside")
-            fig.update_layout(showlegend=False, height=500)
-            st.plotly_chart(fig, use_container_width=True)
+            # Determine which score column to use for chart
+            chart_score_col = score_col if score_col else "ranking_score"
+            if chart_score_col not in df_lb.columns:
+                # Fallback if score_col was determined but somehow not in columns
+                chart_score_col = "holdout_score" if "holdout_score" in df_lb.columns else "score"
+            
+            if chart_score_col in df_lb.columns:
+                fig = px.bar(
+                    df_lb,
+                    x="model",
+                    y=chart_score_col,
+                    color="model",
+                    text=chart_score_col,
+                    title=f"Model Performance ({chart_score_col.replace('_', ' ').title()})",
+                    labels={"model": "Algorithm", chart_score_col: "Score"}
+                )
+                fig.update_traces(texttemplate="%{text:.4f}", textposition="outside")
+                fig.update_layout(showlegend=False, height=500)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.warning("No score column available for visualization")
         
         # Model details
         st.markdown("### 🔍 Model Details")

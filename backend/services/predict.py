@@ -358,3 +358,29 @@ def explain_prediction(dataset_id: str, payload: Dict) -> Dict:
             "error": str(e),
             "error_code": "EXPLANATION_FAILED"
         }
+
+
+def make_batch_prediction(dataset_id: str, file_content: bytes, mode: str = "full") -> Dict:
+    """
+    Batch predict from CSV file content.
+    
+    Args:
+        dataset_id: Dataset ID
+        file_content: Raw CSV file bytes
+        mode: Prediction mode
+    
+    Returns:
+        Batch prediction results dictionary
+    """
+    try:
+        import io
+        # Parse CSV content
+        df = pd.read_csv(io.BytesIO(file_content))
+        payloads = df.to_dict('records')
+        return batch_predict(dataset_id, payloads, mode)
+    except Exception as e:
+        return {
+            "status": "failed",
+            "error": f"Failed to parse CSV: {str(e)}",
+            "error_code": "CSV_PARSE_ERROR"
+        }

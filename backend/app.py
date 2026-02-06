@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, APIRouter
+from fastapi import FastAPI, UploadFile, File, HTTPException, APIRouter, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.requests import Request
@@ -9,8 +9,12 @@ import json
 import pandas as pd
 import logging
 
+# All service imports together
 from backend.services.ingest import process_upload
 from backend.services.eda import generate_eda
+from backend.services.cluster import run_clustering
+from backend.services.anomaly import run_anomaly_detection
+from backend.services.advanced import run_pca, run_tsne
 from backend.services.cleaning import full_etl
 from backend.services.training import train_model_logic
 from backend.services.predict import make_prediction, make_batch_prediction
@@ -135,6 +139,77 @@ def check_mapping_confirmed(dataset_id: str) -> dict:
     except Exception as e:
         logger.error(f"Error checking mapping confirmation for {dataset_id}: {str(e)}", exc_info=e)
         raise HTTPException(500, f"Error checking mapping confirmation: {str(e)}")
+
+def load_data_for_eda(dataset_id: str) -> pd.DataFrame:
+    """
+    Load data for EDA, preferring clean data if available, falling back to ingested.
+    
+    This mirrors frontend behavior: if ETL is complete, use clean.csv, otherwise use ingested.csv
+    (which has normalized column names)
+    """
+    from backend.services.utils import load_clean, load_ingested
+    dpath = datasetdir(dataset_id)
+    clean_path = os.path.join(dpath, "clean.csv")
+    if os.path.exists(clean_path):
+        return load_clean(dataset_id)
+    else:
+        return load_ingested(dataset_id)
+
+# =====================================================
+# EDA ADVANCED ANALYTICS ENDPOINTS
+# =====================================================
+@api_router.post("/eda/cluster/{dataset_id}")
+def eda_cluster(dataset_id: str, payload: dict = Body(...)):
+    """
+    Run clustering on selected features and return labels and base64 plot.
+    Payload: {"features": [...], "algo": "KMeans", "n_clusters": 3}
+    """
+    check_mapping_confirmed(dataset_id)
+    df = load_data_for_eda(dataset_id)
+    features = payload.get("features", [])
+    algo = payload.get("algo", "KMeans")
+    n_clusters = payload.get("n_clusters", 3)
+    result = run_clustering(df, features, algo, n_clusters)
+    if result.get("status") == "failed":
+        raise HTTPException(status_code=400, detail=result.get("error", "Clustering failed"))
+    return {"status": "ok", **result}
+
+@api_router.post("/eda/anomaly/{dataset_id}")
+def eda_anomaly(dataset_id: str, payload: dict = Body(...)):
+    """
+    Run anomaly detection on selected features and return labels and base64 plot.
+    Payload: {"features": [...], "method": "Isolation Forest", "contamination": 0.05}
+    """
+    check_mapping_confirmed(dataset_id)
+    df = load_data_for_eda(dataset_id)
+    features = payload.get("features", [])
+    method = payload.get("method", "Isolation Forest")
+    contamination = payload.get("contamination", 0.05)
+    result = run_anomaly_detection(df, features, method, contamination)
+    if result.get("status") == "failed":
+        raise HTTPException(status_code=400, detail=result.get("error", "Anomaly detection failed"))
+    return {"status": "ok", **result}
+
+@api_router.post("/eda/advanced/{dataset_id}")
+def eda_advanced(dataset_id: str, payload: dict = Body(...)):
+    """
+    Run advanced EDA (PCA, t-SNE) on selected features.
+    Payload: {"features": [...], "method": "PCA" or "t-SNE", "n_components": 2}
+    """
+    check_mapping_confirmed(dataset_id)
+    df = load_data_for_eda(dataset_id)
+    features = payload.get("features", [])
+    method = payload.get("method", "PCA")
+    n_components = payload.get("n_components", 2)
+    if method == "PCA":
+        result = run_pca(df, features, n_components)
+    elif method == "t-SNE":
+        result = run_tsne(df, features, n_components)
+    else:
+        raise HTTPException(400, "Unknown advanced EDA method")
+    if result.get("status") == "failed":
+        raise HTTPException(status_code=400, detail=result.get("error", f"{method} failed"))
+    return {"status": "ok", **result}
 
 # =====================================================
 # TEST ROUTE
@@ -411,8 +486,7 @@ def train(dataset_id: str, payload: dict):
     # Extract optional parameters with defaults
     test_size = payload.get("test_size", 0.2)
     random_state = payload.get("random_state", 42)
-    train_regression = payload.get("train_regression", True)
-    train_classification = payload.get("train_classification", True)
+    task = payload.get("task")  # None = auto-detect, "classification", or "regression"
     time_limit_seconds = payload.get("time_limit_seconds")
 
     # Submit background job
@@ -421,8 +495,7 @@ def train(dataset_id: str, payload: dict):
         target=target,
         test_size=test_size,
         random_state=random_state,
-        train_regression=train_regression,
-        train_classification=train_classification,
+        task=task,
         time_limit_seconds=time_limit_seconds
     )
     
@@ -525,7 +598,8 @@ def predict(dataset_id: str, payload: dict):
         raise HTTPException(status_code=400, detail="Payload must be a dictionary")
     
     result = make_prediction(dataset_id, payload)
-    if result.get("status") not in ("ok", "error"):
+    # ✅ Return all valid statuses - "ok" and "failed" should both be returned to client
+    if result.get("status") not in ("ok", "failed"):
         raise HTTPException(status_code=400, detail=result.get("error", "Prediction failed"))
     return safe(result)
 

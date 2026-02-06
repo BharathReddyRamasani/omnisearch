@@ -8,7 +8,7 @@ import time
 import json
 
 # Update API URL
-API = "http://127.0.0.1:8003/api"
+API = "http://127.0.0.1:8000/api"
 
 st.set_page_config(
     page_title="OmniSearch AI – Industrial Dashboard",
@@ -458,16 +458,31 @@ with tab_models:
         leaderboard = model_meta.get('leaderboard', [])
         if leaderboard:
             df_lb = pd.DataFrame(leaderboard)
-            df_lb = df_lb.sort_values('score', ascending=False)
-
-            # Enhanced leaderboard with styling
-            st.dataframe(
-                df_lb.style
-                .background_gradient(subset=['score'], cmap='Blues')
-                .format({'score': '{:.4f}'})
-                .apply(lambda x: ['background-color: #e6f7ff' if x.name == 0 else '' for i in x], axis=0),
-                use_container_width=True
-            )
+            
+            # ✅ Determine which score column to sort by
+            sort_col = None
+            if 'ranking_score' in df_lb.columns:
+                sort_col = 'ranking_score'
+            elif 'holdout_score' in df_lb.columns:
+                sort_col = 'holdout_score'
+            elif 'score' in df_lb.columns:
+                sort_col = 'score'
+            
+            if sort_col:
+                df_lb = df_lb.sort_values(sort_col, ascending=False)
+                
+                # Enhanced leaderboard with styling
+                st.dataframe(
+                    df_lb.style
+                    .background_gradient(subset=[sort_col], cmap='Blues')
+                    .format({sort_col: '{:.4f}'})
+                    .apply(lambda x: ['background-color: #e6f7ff' if x.name == 0 else '' for i in x], axis=0),
+                    use_container_width=True
+                )
+            else:
+                st.dataframe(df_lb, use_container_width=True)
+        else:
+            st.info("No models trained yet")
 
             # Performance radar chart
             st.markdown("### 📈 **Model Comparison Radar**")

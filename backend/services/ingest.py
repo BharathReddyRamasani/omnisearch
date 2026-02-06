@@ -1,10 +1,10 @@
-from curses import raw
 import os
 import io
 import json
 import uuid
 import logging
 import pandas as pd
+import numpy as np
 from datetime import datetime
 from typing import Dict, Tuple, List, Any
 from fastapi import UploadFile, HTTPException
@@ -26,6 +26,36 @@ MAX_ROWS_SAMPLE = 100000  # Max rows to sample for inference
 # Encoding detection thresholds
 ENCODING_CONFIDENCE_THRESHOLD = 0.7  # Only accept encodings with >= 70% confidence
 ENCODING_DETECTION_SAMPLE_SIZE = 50000  # Bytes to sample for detection
+
+# =====================================================
+# JSON SERIALIZATION UTILITY
+# =====================================================
+
+def convert_numpy_to_python(obj: Any) -> Any:
+    """
+    Convert numpy/pandas types to Python native types for JSON serialization.
+    
+    Recursively handles:
+    - numpy scalar types (int64, float64, bool_, etc.)
+    - pandas NA/NaT values
+    - Dictionaries and lists
+    """
+    if isinstance(obj, dict):
+        return {key: convert_numpy_to_python(value) for key, value in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [convert_numpy_to_python(item) for item in obj]
+    elif isinstance(obj, (np.integer, np.int64, np.int32)):
+        return int(obj)
+    elif isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj)
+    elif isinstance(obj, (np.bool_, bool)):
+        return bool(obj)
+    elif pd.isna(obj):
+        return None
+    elif isinstance(obj, (pd.Timestamp, datetime)):
+        return obj.isoformat() if hasattr(obj, 'isoformat') else str(obj)
+    else:
+        return obj
 
 # =====================================================
 # ENCODING DETECTION (Industrial-Grade)
@@ -53,7 +83,8 @@ def detect_encoding(raw: bytes) -> Tuple[str, float, str]:
             return "utf-8", 0.0, "fallback_none"
         
         encoding = detected.encoding
-        confidence = float(detected.confidence)
+        # confidence is a float between 0 and 1
+        confidence = float(detected.encoding_confidence) if hasattr(detected, 'encoding_confidence') else 1.0
         
         logger.info(f"Detected encoding: {encoding} with confidence: {confidence:.2%}")
         
@@ -345,16 +376,62 @@ async def process_upload(file: UploadFile) -> Dict[str, Any]:
                 f"sample_limit={MAX_ROWS_SAMPLE}, robust parsing enabled"
             )
 
-            df = pd.read_csv(
-                io.BytesIO(raw),              # ⬅ avoid full decode to string
-                encoding=encoding,
-                nrows=MAX_ROWS_SAMPLE,        # ⬅ hard safety cap
-                sep=None,                     # ⬅ delimiter auto-detection
-                engine="python",              # ⬅ required for sep=None
-                on_bad_lines="skip",          # ⬅ dirty rows tolerated
-                low_memory=False              # ⬅ consistent dtype inference
-            )
+            # Try multiple parsing strategies
+            df = None
+            parse_errors = []
+            
+            # Strategy 1: Python engine with auto-detect separator
+            try:
+                df = pd.read_csv(
+                    io.BytesIO(raw),
+                    encoding=encoding,
+                    nrows=MAX_ROWS_SAMPLE,
+                    sep=None,
+                    engine="python",
+                    on_bad_lines="skip"
+                )
+                logger.info("Successfully parsed CSV with python engine")
+            except ValueError as e:
+                parse_errors.append(f"Python engine failed: {str(e)}")
+                logger.debug(f"Strategy 1 failed: {str(e)}")
+                
+                # Strategy 2: C engine with common delimiters
+                try:
+                    for delimiter in [',', ';', '\t', '|']:
+                        try:
+                            df = pd.read_csv(
+                                io.BytesIO(raw),
+                                encoding=encoding,
+                                nrows=MAX_ROWS_SAMPLE,
+                                sep=delimiter,
+                                engine="c",
+                                on_bad_lines="skip"
+                            )
+                            logger.info(f"Successfully parsed CSV with delimiter '{delimiter}'")
+                            break
+                        except (pd.errors.ParserError, ValueError):
+                            continue
+                except Exception as e:
+                    parse_errors.append(f"C engine failed: {str(e)}")
+                    logger.debug(f"Strategy 2 failed: {str(e)}")
+            except Exception as e:
+                parse_errors.append(f"Unexpected error: {str(e)}")
+                logger.debug(f"Strategy 1 unexpected error: {str(e)}")
+            
+            if df is None:
+                logger.error(f"All CSV parsing strategies failed: {'; '.join(parse_errors)}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "Failed to parse the uploaded CSV file. "
+                        "Ensure it is a valid CSV with proper delimiter (comma, semicolon, tab, or pipe) "
+                        "and consistent column structure."
+                    )
+                )
 
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         logger.error("Failed to read uploaded file", exc_info=e)
         raise HTTPException(
@@ -460,12 +537,15 @@ async def process_upload(file: UploadFile) -> Dict[str, Any]:
         "column_mapping_confirmed": False
     }
 
+    # Convert all numpy types to Python native types for JSON serialization
+    upload_metadata = convert_numpy_to_python(upload_metadata)
+
     with open(os.path.join(dpath, "upload_metadata.json"), "w") as f:
         json.dump(upload_metadata, f, indent=2)
     
     logger.info(f"Upload complete for {dataset_id}: {len(df)} rows × {len(df.columns)} columns")
     
-    return {
+    response = {
         "status": "ok",
         "dataset_id": dataset_id,
         "rows": len(df),
@@ -489,3 +569,6 @@ async def process_upload(file: UploadFile) -> Dict[str, Any]:
         },
         "preview": df.head(5).to_dict(orient="records")
     }
+    
+    # Convert numpy types in response
+    return convert_numpy_to_python(response)

@@ -216,7 +216,7 @@ import plotly.express as px
 import json
 from io import StringIO
 
-API = "http://127.0.0.1:8003/api"
+API = "http://127.0.0.1:8000/api"
 
 st.set_page_config(page_title="OmniSearch AI – Predict", layout="wide")
 
@@ -245,7 +245,20 @@ model_meta = st.session_state.model_meta
 # HEADER
 # =====================================================
 st.markdown("# 🎯 Enterprise Prediction Engine")
-st.markdown(f"**Dataset:** {dataset_id} | **Model:** {model_meta['best_model']} (Score: {model_meta['best_score']:.3f})")
+
+# ✅ Safe access with fallback chain
+best_model = model_meta.get('best_model', 'Unknown')
+best_score = model_meta.get('best_score')
+
+if best_score is None:
+    # Fallback to leaderboard
+    leaderboard = model_meta.get('leaderboard', [])
+    if leaderboard:
+        best_score = max([m.get('ranking_score', m.get('holdout_score', 0)) for m in leaderboard], default=0)
+    else:
+        best_score = 0
+
+st.markdown(f"**Dataset:** {dataset_id} | **Model:** {best_model} (Score: {float(best_score):.3f})")
 
 # =====================================================
 # PREDICTION TABS
@@ -274,7 +287,6 @@ with pred_tabs[0]:
     st.markdown("### 📝 Input Features")
 
     payload = {}
-    payload["_mode"] = "top" if use_top else "full"
 
     cols = st.columns(3)
     for i, f in enumerate(features):
@@ -300,9 +312,8 @@ with pred_tabs[0]:
     if st.button("🚀 Predict", type="primary", use_container_width=True):
         with st.spinner("Scoring with enterprise model…"):
             try:
-                # Clean payload: remove None values
-                clean_payload = {k: v for k, v in payload.items() if v is not None}
-                clean_payload["_mode"] = payload.get("_mode", "full")
+                # Clean payload: remove None values and metadata keys
+                clean_payload = {k: v for k, v in payload.items() if v is not None and not k.startswith("_")}
                 
                 r = requests.post(f"{API}/predict/{dataset_id}", json=clean_payload, timeout=30)
                 r.raise_for_status()
@@ -383,7 +394,7 @@ with pred_tabs[1]:
                                     else:
                                         clean_row[key] = val
                                 
-                                payload = {"_mode": "full"}
+                                payload = {}
                                 payload.update(clean_row)
                                 
                                 r = requests.post(f"{API}/predict/{dataset_id}", json=payload, timeout=30)
@@ -427,7 +438,7 @@ with pred_tabs[2]:
     st.markdown("### 🤖 Model Summary")
     col1, col2, col3 = st.columns(3)
     col1.metric("Model Type", model_meta["best_model"])
-    col2.metric("Validation Score", f"{model_meta['best_score']:.4f}")
+    col2.metric("Validation Score", f"{best_score:.4f}")
     col3.metric("Task", model_meta["task"].upper())
 
     # Feature Importance
@@ -465,7 +476,7 @@ with pred_tabs[3]:
     st.markdown("### Model Information")
     st.json({
         "model": model_meta["best_model"],
-        "score": model_meta["best_score"],
+        "score": best_score,
         "task": model_meta["task"],
         "features": len(model_meta.get("raw_columns", []))
     })

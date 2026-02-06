@@ -1,7 +1,7 @@
 import streamlit as st
 import requests
 
-API = "http://127.0.0.1:8003"
+API = "http://127.0.0.1:8000"
 
 st.title("📊 Model Evaluation")
 

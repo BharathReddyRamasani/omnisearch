@@ -28,6 +28,7 @@ from sklearn.metrics import (
 
 from backend.services.utils import load_raw, load_clean, model_dir
 from backend.services.model_registry import ModelRegistry, register_trained_model
+from backend.services.ingest import convert_numpy_to_python
 
 
 # =====================================================
@@ -476,12 +477,44 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
                 "error": "Clean data not available - cannot proceed (data leakage risk)",
                 "error_code": "CLEAN_DATA_REQUIRED",
                 "details": f"load_clean failed: {str(clean_error)}",
-                "recommendation": "Run data cleaning/ingestion first"
+                "recommendation": "Please follow the ML workflow: Upload → EDA → ETL (Clean Data) → Train. Run the ETL pipeline first to generate cleaned data.",
+                "workflow_steps": [
+                    "1. Upload your dataset",
+                    "2. Run EDA to explore the data",
+                    "3. Run ETL to clean and prepare the data",
+                    "4. Then come back to Training"
+                ]
             }
         
-        # Validate target
-        if target not in df.columns:
-            return {"status": "failed", "error": "Target column not found"}
+        # ✅ RESOLVE TARGET COLUMN NAME MAPPING
+        # The user provides a normalized column name (from column_mapping),
+        # but the clean CSV has the original column names.
+        # We need to map the user-provided target back to the original column name.
+        upload_meta = load_upload_metadata(dataset_id)
+        column_mapping = upload_meta.get("column_mapping", {})
+        
+        # Create reverse mapping: normalized_name -> original_name
+        reverse_mapping = {v: k for k, v in column_mapping.items()}
+        
+        # Convert user-provided target to original column name
+        original_target = reverse_mapping.get(target, target)
+        
+        # Validate target - first check if original target is in df
+        if original_target not in df.columns:
+            # If not found as original, try the user-provided target directly (case-insensitive fallback)
+            case_insensitive_cols = {col.lower(): col for col in df.columns}
+            original_target = case_insensitive_cols.get(target.lower(), target)
+            
+            if original_target not in df.columns:
+                return {
+                    "status": "failed",
+                    "error": f"Target column '{target}' not found in dataset",
+                    "available_columns": list(df.columns),
+                    "hint": "Use the normalized column names from the ETL step"
+                }
+        
+        # Use the resolved original target column name
+        target = original_target
         
         # Prepare data
         X = df.drop(columns=[target])
@@ -517,10 +550,12 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
         if task not in ["classification", "regression"]:
             return {"status": "failed", "error": "task must be 'classification' or 'regression'"}
         
-        # Detect and remove ID columns (FROM METADATA - single source of truth)
-        upload_meta = load_upload_metadata(dataset_id)
-        id_columns = upload_meta.get("detected_id_columns", [])
-        for col in id_columns:
+        # ✅ RESOLVE ID COLUMN NAMES (FROM METADATA - single source of truth)
+        # detected_id_columns contains normalized names, but we need original names for the clean CSV
+        id_columns_normalized = upload_meta.get("detected_id_columns", [])
+        id_columns_original = [reverse_mapping.get(col, col) for col in id_columns_normalized]
+        
+        for col in id_columns_original:
             if col in X.columns:
                 X = X.drop(columns=[col])
         
@@ -914,6 +949,7 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
             "target": target,
             "best_model": best_model_name,
             "selection_score": round(float(best_score), 4),
+            "best_score": round(float(best_score), 4),  # ✅ Backward compatibility for frontend
             "selection_basis": "cv_mean" if cv_metric_used else "holdout",
             "cv_mean_score": round(float(best_cv_score), 4) if best_cv_score is not None else None,
             "holdout_score": round(float(best_holdout_score), 4),
@@ -923,7 +959,7 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
             ),
             "leaderboard": leaderboard,
             "raw_columns": list(X.columns),
-            "dropped_id_columns": id_columns,
+            "dropped_id_columns": id_columns_original,
             "feature_defaults": extract_defaults(X),
             "feature_importance": importance_data,
             "top_features": importance_data["top_features"],
@@ -967,9 +1003,10 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
             result["statistical_drift_warning"] = statistical_drift
             result["dataset_drift_warning"] = drift_check
         
-        # Save metadata
+        # Save metadata (convert numpy types to JSON-serializable)
+        result_serializable = convert_numpy_to_python(result)
         with open(os.path.join(root, "metadata.json"), "w") as f:
-            json.dump(result, f, indent=2)
+            json.dump(result_serializable, f, indent=2)
         
         # Register in model registry
         try:
@@ -978,7 +1015,7 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
         except:
             pass
         
-        return result
+        return convert_numpy_to_python(result)
     
     except TimeoutError:
         return {"status": "failed", "error": "Training exceeded time limit"}

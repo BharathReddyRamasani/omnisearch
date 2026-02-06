@@ -124,7 +124,7 @@ import plotly.express as px
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import IsolationForest
 
-API = "http://127.0.0.1:8003/api"
+API = "http://127.0.0.1:8000/api"
 
 st.set_page_config(layout="wide", page_title="OmniSearch AI — Enterprise ETL")
 
@@ -303,8 +303,17 @@ with etl_tabs[3]:
                     z_scores = (data - data.mean()) / data.std()
                     outliers = np.abs(z_scores) > 3
                 elif method == "Isolation Forest":
-                    iso = IsolationForest(contamination=0.1, random_state=42)
-                    outliers = iso.fit_predict(data.values.reshape(-1, 1)) == -1
+                    # Ensure data is clean (no NaN) for Isolation Forest
+                    if len(data) < 10:
+                        st.warning(f"⚠️ Need at least 10 valid values for Isolation Forest. Only {len(data)} available.")
+                        outliers = pd.Series([False] * len(data), index=data.index)
+                    else:
+                        try:
+                            iso = IsolationForest(contamination=0.1, random_state=42)
+                            outliers = iso.fit_predict(data.values.reshape(-1, 1)) == -1
+                        except Exception as e:
+                            st.warning(f"Isolation Forest failed: {str(e)}. Try IQR or Z-Score instead.")
+                            outliers = pd.Series([False] * len(data), index=data.index)
 
                 st.metric("Outliers Detected", outliers.sum())
                 st.metric("Total Values", len(data))
