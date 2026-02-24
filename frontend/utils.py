@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 from typing import Dict, Any, Optional
 
-API_BASE = "http://127.0.0.1:8000"
+API_BASE = "http://127.0.0.1:8001"
 
 def setup_page(title: str, icon: str = "📊"):
     """Professional page setup"""

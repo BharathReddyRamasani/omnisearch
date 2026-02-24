@@ -5,6 +5,9 @@ from fastapi.requests import Request
 from fastapi.exceptions import HTTPException as FastAPIHTTPException
 
 import os
+from dotenv import load_dotenv
+load_dotenv()  # Load .env file from project root
+
 import json
 import pandas as pd
 import logging
@@ -21,7 +24,9 @@ from backend.services.predict import make_prediction, make_batch_prediction
 from backend.services.model_registry import get_active_model_metadata, get_model_history
 from backend.services.registry import submit_training_job, get_job
 from backend.services.utils import safe, raw_path, datasetdir, model_dir
-from backend.services.chat import get_chat_response
+
+
+print("--- BACKEND APP INITIALIZING ---")
 
 # =====================================================
 # LOGGING
@@ -366,6 +371,25 @@ def run_etl(dataset_id: str):
     return safe(result)
 
 # =====================================================
+# DATASET LISTING
+# =====================================================
+@api_router.get("/datasets/list")
+def list_datasets():
+    try:
+        datasets = []
+        dpath_root = datasetdir("")
+        if os.path.exists(dpath_root):
+            for d in os.listdir(dpath_root):
+                dpath = os.path.join(dpath_root, d)
+                if os.path.isdir(dpath):
+                    if os.path.exists(os.path.join(dpath, "raw.csv")) or \
+                       os.path.exists(os.path.join(dpath, "clean.csv")):
+                        datasets.append({"id": d, "status": "active"})
+        return safe({"status": "ok", "datasets": datasets})
+    except Exception as e:
+        raise HTTPException(500, f"Error listing datasets: {str(e)}")
+
+# =====================================================
 # DOWNLOADS
 # =====================================================
 @api_router.get("/datasets/{dataset_id}/download/{kind}")
@@ -629,26 +653,5 @@ async def predict_batch(dataset_id: str, file: UploadFile = File(...)):
     # Return both JSON response and CSV download
     return safe(result)
 
-# =====================================================
-# CHAT (DSL-based with RAG)
-# =====================================================
-from backend.services.chat import get_chat_response
-
-@api_router.post("/chat/{dataset_id}")
-def chat(dataset_id: str, payload: dict):
-    question = payload.get("question", "")
-    history = payload.get("history", [])
-    if not question:
-        raise HTTPException(status_code=400, detail="Question required")
-    result = get_chat_response(dataset_id, question, history)
-    return safe(result)
-
 # Include the API router
 app.include_router(api_router)
-# =====================================================
-# DATASET INFO & SAMPLE
-
-
-
-
-

@@ -142,14 +142,23 @@ def make_prediction(dataset_id: str, payload: Dict, mode: str = "full") -> Dict:
                 "error_code": "INVALID_METADATA"
             }
         
-        # Determine features to use
+        # Determine features to use for VALIDATION (user-facing)
         if mode == "smart" and top_features:
             required_features = top_features
         else:
             required_features = list(feature_defaults.keys())
         
-        # Validate input
-        is_valid, error_msg = validate_input_schema(payload, required_features, feature_defaults)
+        # Auto-fill ALL features (not just required ones) so the model
+        # pipeline always gets every column it was trained on.
+        # This is critical for Guided Mode where the user only fills
+        # top-impact features — all other columns are auto-filled.
+        filled_payload = autofill_missing_features(
+            payload, feature_defaults, list(feature_defaults.keys())
+        )
+        auto_filled = [f for f in feature_defaults if f not in payload or payload[f] in [None, ""]]
+        
+        # Validate input (only check user-facing features after auto-fill)
+        is_valid, error_msg = validate_input_schema(filled_payload, required_features, feature_defaults)
         if not is_valid:
             return {
                 "status": "failed",
@@ -157,10 +166,6 @@ def make_prediction(dataset_id: str, payload: Dict, mode: str = "full") -> Dict:
                 "error_code": "INVALID_INPUT_SCHEMA",
                 "hint": f"Expected features: {', '.join(required_features)}"
             }
-        
-        # Auto-fill missing features
-        filled_payload = autofill_missing_features(payload, feature_defaults, required_features)
-        auto_filled = [f for f in required_features if f not in payload or payload[f] in [None, ""]]
         
         # Prepare input DataFrame
         X = pd.DataFrame([filled_payload])

@@ -8,7 +8,7 @@ import time
 import json
 
 # Update API URL
-API = "http://127.0.0.1:8000/api"
+API = "http://127.0.0.1:8001/api"
 
 st.set_page_config(
     page_title="OmniSearch AI – Industrial Dashboard",
@@ -16,121 +16,8 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# =====================================================
-# MODERN BLUE GRADIENT CSS STYLING (Based on GalacticML Design)
-# =====================================================
-st.markdown("""
-<style>
-    /* Main theme colors: Blue gradients */
-    .dashboard-header {
-        background: linear-gradient(135deg, #0052cc 0%, #1e6ed4 50%, #2563eb 100%);
-        padding: 3rem 2.5rem;
-        border-radius: 20px;
-        color: white;
-        text-align: center;
-        margin-bottom: 2.5rem;
-        box-shadow: 0 20px 40px rgba(5, 82, 204, 0.25);
-    }
-    .dashboard-title {
-        font-size: 3.5rem;
-        font-weight: 800;
-        margin: 0;
-        letter-spacing: -0.5px;
-        text-shadow: 0 2px 8px rgba(0,0,0,0.1);
-    }
-    .dashboard-subtitle {
-        font-size: 1.2rem;
-        margin: 1rem 0 0 0;
-        opacity: 0.95;
-        font-weight: 500;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #0052cc 0%, #2563eb 100%);
-        color: white;
-        padding: 1.75rem 1.5rem;
-        border-radius: 16px;
-        text-align: center;
-        box-shadow: 0 10px 30px rgba(5, 82, 204, 0.15);
-        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-        border: 1px solid rgba(255,255,255,0.1);
-    }
-    .metric-card:hover {
-        transform: translateY(-8px);
-        box-shadow: 0 15px 40px rgba(5, 82, 204, 0.25);
-    }
-    .metric-value {
-        font-size: 2.5rem;
-        font-weight: 700;
-        margin: 0.75rem 0 0.25rem 0;
-        letter-spacing: -1px;
-    }
-    .metric-label {
-        font-size: 0.95rem;
-        opacity: 0.92;
-        font-weight: 500;
-    }
-    .status-card {
-        background: linear-gradient(135deg, #f0f6ff 0%, #e6f2ff 100%);
-        padding: 1.75rem;
-        border-radius: 16px;
-        border-left: 5px solid #0052cc;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        margin: 1rem 0;
-        transition: all 0.3s ease;
-        color: #1f2937;
-    }
-    .status-card:hover {
-        box-shadow: 0 8px 30px rgba(0,0,0,0.12);
-    }
-    .alert-card {
-        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
-        color: white;
-        padding: 1rem;
-        border-radius: 12px;
-        margin: 1rem 0;
-        border: 1px solid rgba(255,255,255,0.2);
-    }
-    .progress-card {
-        background: linear-gradient(135deg, #f0f6ff 0%, #e6f2ff 100%);
-        padding: 1.75rem;
-        border-radius: 16px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        margin: 1rem 0;
-        color: #1f2937;
-    }
-    .chart-container {
-        background: linear-gradient(135deg, #f0f6ff 0%, #e6f2ff 100%);
-        padding: 1.75rem;
-        border-radius: 16px;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
-        margin: 1rem 0;
-        color: #1f2937;
-    }
-    .sidebar-metric {
-        background: linear-gradient(135deg, #f0f6ff 0%, #e6f2ff 100%);
-        padding: 1rem;
-        border-radius: 12px;
-        margin: 0.75rem 0;
-        border-left: 4px solid #0052cc;
-        transition: all 0.3s ease;
-    }
-    .sidebar-metric:hover {
-        background: linear-gradient(135deg, #e6f2ff 0%, #dceeff 100%);
-    }
-    /* Responsive sizing */
-    @media (max-width: 768px) {
-        .dashboard-title {
-            font-size: 2.5rem;
-        }
-        .dashboard-subtitle {
-            font-size: 1rem;
-        }
-        .metric-value {
-            font-size: 2rem;
-        }
-    }
-</style>
-""", unsafe_allow_html=True)
+from theme import inject_theme, page_header, page_footer
+inject_theme()
 
 # =====================================================
 # SIDEBAR METRICS
@@ -142,14 +29,13 @@ with st.sidebar:
     # System health indicators
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("🖥️ CPU", "45%", "↓2%")
+        st.metric("🖥️ CPU", "45%", "↓ 2%")
     with col2:
-        st.metric("💾 Memory", "67%", "↑5%")
+        st.metric("💾 Memory", "67%", "↑ 5%")
 
     st.markdown("---")
     st.markdown("### 🔄 **Active Sessions**")
 
-    # Mock active sessions
     sessions = [
         {"user": "Data Scientist", "dataset": "customer_data.csv", "status": "Training"},
         {"user": "ML Engineer", "dataset": "sales_data.csv", "status": "Predicting"},
@@ -158,10 +44,10 @@ with st.sidebar:
 
     for session in sessions:
         st.markdown(f"""
-        <div class="sidebar-metric">
-            <strong>{session['user']}</strong><br>
-            <small>{session['dataset']}</small><br>
-            <span style="color: #28a745;">● {session['status']}</span>
+        <div class="glass-card" style="padding:0.8rem 1rem;">
+            <strong style="color:#E8EAED;">{session['user']}</strong><br>
+            <small style="color:#9AA0A6;">{session['dataset']}</small><br>
+            <span style="color: #2DD4A0;">● {session['status']}</span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -174,22 +60,18 @@ with st.sidebar:
     ]
 
     for alert in alerts:
-        color = "#ffc107" if alert["type"] == "warning" else "#17a2b8"
+        color = "rgba(240, 180, 41, 0.15)" if alert["type"] == "warning" else "rgba(108, 99, 255, 0.1)"
+        border_color = "#F0B429" if alert["type"] == "warning" else "#6C63FF"
         st.markdown(f"""
-        <div style="background: {color}; color: white; padding: 0.5rem; border-radius: 5px; margin: 0.5rem 0; font-size: 0.8rem;">
-            {alert['message']}<br><small>{alert['time']}</small>
+        <div style="background:{color}; border:1px solid {border_color}; color:#E8EAED; padding:0.5rem 0.8rem; border-radius:8px; margin:0.5rem 0; font-size:0.8rem;">
+            {alert['message']}<br><small style="color:#9AA0A6;">{alert['time']}</small>
         </div>
         """, unsafe_allow_html=True)
 
 # =====================================================
 # MAIN DASHBOARD HEADER
 # =====================================================
-st.markdown("""
-<div class="dashboard-header">
-    <h1 class="dashboard-title">🚀 Industrial ML Dashboard</h1>
-    <p class="dashboard-subtitle">Real-time Analytics • Enterprise Monitoring • AI-Powered Insights</p>
-</div>
-""", unsafe_allow_html=True)
+page_header("🚀", "Industrial ML Dashboard", "Real-time Analytics • Enterprise Monitoring • AI-Powered Insights")
 
 # =====================================================
 # SESSION CHECK
@@ -227,25 +109,24 @@ except Exception as e:
     eda_data = {}
     model_meta = {}
 
-# KPI Cards
+# KPI Cards — using step-card style for dark theme
 kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5, kpi_col6 = st.columns(6)
 
 with kpi_col1:
     st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-label">📊 Dataset Rows</div>
-        <div class="metric-value">{dataset_info.get('rows', 0):,}</div>
+    <div class="step-card">
+        <div class="step-desc">📊 Dataset Rows</div>
+        <div class="step-title" style="font-size:1.5rem;">{dataset_info.get('rows', 0):,}</div>
     </div>
     """, unsafe_allow_html=True)
 
 with kpi_col2:
-    # Handle columns as either list or int
     cols_data = dataset_info.get('columns', 0)
     cols_count = len(cols_data) if isinstance(cols_data, list) else cols_data
     st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-label">📋 Columns</div>
-        <div class="metric-value">{cols_count}</div>
+    <div class="step-card">
+        <div class="step-desc">📋 Columns</div>
+        <div class="step-title" style="font-size:1.5rem;">{cols_count}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -253,36 +134,36 @@ with kpi_col3:
     missing_data = eda_data.get('missing', {})
     missing_total = sum(missing_data.values()) if isinstance(missing_data, dict) else 0
     st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-label">⚠️ Missing Values</div>
-        <div class="metric-value">{missing_total:,}</div>
+    <div class="step-card">
+        <div class="step-desc">⚠️ Missing Values</div>
+        <div class="step-title" style="font-size:1.5rem;">{missing_total:,}</div>
     </div>
     """, unsafe_allow_html=True)
 
 with kpi_col4:
     model_score = model_meta.get('best_score', 0)
     st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-label">🎯 Model Score</div>
-        <div class="metric-value">{model_score:.3f}</div>
+    <div class="step-card">
+        <div class="step-desc">🎯 Model Score</div>
+        <div class="step-title" style="font-size:1.5rem;">{model_score:.3f}</div>
     </div>
     """, unsafe_allow_html=True)
 
 with kpi_col5:
     models_trained = len(model_meta.get('leaderboard', []))
     st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-label">🤖 Models Trained</div>
-        <div class="metric-value">{models_trained}</div>
+    <div class="step-card">
+        <div class="step-desc">🤖 Models Trained</div>
+        <div class="step-title" style="font-size:1.5rem;">{models_trained}</div>
     </div>
     """, unsafe_allow_html=True)
 
 with kpi_col6:
-    uptime = "24h 32m"  # Mock uptime
+    uptime = "24h 32m"
     st.markdown(f"""
-    <div class="metric-card">
-        <div class="metric-label">⏱️ System Uptime</div>
-        <div class="metric-value">{uptime}</div>
+    <div class="step-card">
+        <div class="step-desc">⏱️ System Uptime</div>
+        <div class="step-title" style="font-size:1.5rem;">{uptime}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -305,30 +186,30 @@ with tab_overview:
     with status_col1:
         dataset_status = "✅ Active" if dataset_id else "❌ Not Loaded"
         st.markdown(f"""
-        <div class="status-card">
-            <h4>📁 Dataset Status</h4>
-            <p style="font-size: 1.2rem; margin: 0.5rem 0;">{dataset_status}</p>
-            <small>ID: {dataset_id[:8]}...</small>
+        <div class="glass-card">
+            <h4 style="color:#B8B3FF; margin:0 0 0.5rem 0;">📁 Dataset Status</h4>
+            <p style="font-size: 1.2rem; margin: 0.5rem 0; color:#E8EAED;">{dataset_status}</p>
+            <small style="color:#9AA0A6;">ID: {dataset_id[:8]}...</small>
         </div>
         """, unsafe_allow_html=True)
 
     with status_col2:
         model_status = "✅ Trained" if model_meta else "⏳ Not Trained"
         st.markdown(f"""
-        <div class="status-card">
-            <h4>🤖 Model Status</h4>
-            <p style="font-size: 1.2rem; margin: 0.5rem 0;">{model_status}</p>
-            <small>Best: {model_meta.get('best_model', 'N/A')}</small>
+        <div class="glass-card">
+            <h4 style="color:#B8B3FF; margin:0 0 0.5rem 0;">🤖 Model Status</h4>
+            <p style="font-size: 1.2rem; margin: 0.5rem 0; color:#E8EAED;">{model_status}</p>
+            <small style="color:#9AA0A6;">Best: {model_meta.get('best_model', 'N/A')}</small>
         </div>
         """, unsafe_allow_html=True)
 
     with status_col3:
         pipeline_status = "✅ Complete" if model_meta else "🔄 In Progress"
         st.markdown(f"""
-        <div class="status-card">
-            <h4>🔄 Pipeline Status</h4>
-            <p style="font-size: 1.2rem; margin: 0.5rem 0;">{pipeline_status}</p>
-            <small>AutoML Active</small>
+        <div class="glass-card">
+            <h4 style="color:#B8B3FF; margin:0 0 0.5rem 0;">🔄 Pipeline Status</h4>
+            <p style="font-size: 1.2rem; margin: 0.5rem 0; color:#E8EAED;">{pipeline_status}</p>
+            <small style="color:#9AA0A6;">AutoML Active</small>
         </div>
         """, unsafe_allow_html=True)
 
@@ -515,11 +396,11 @@ with tab_models:
 
         with champion_col1:
             st.markdown(f"""
-            <div style="background: linear-gradient(135deg, #0052cc, #2563eb); color: white; padding: 1.75rem; border-radius: 16px; box-shadow: 0 10px 30px rgba(5, 82, 204, 0.2);">
-                <h4>🏆 Best Model</h4>
-                <h2>{model_meta.get('best_model', 'N/A')}</h2>
-                <p>Score: {model_meta.get('best_score', 0):.4f}</p>
-                <p>Task: {model_meta.get('task', 'N/A').title()}</p>
+            <div class="step-card" style="text-align:left; padding:1.5rem;">
+                <h4 style="color:#B8B3FF; margin:0 0 0.5rem 0;">🏆 Best Model</h4>
+                <h2 style="color:#E8EAED; margin:0.5rem 0;">{model_meta.get('best_model', 'N/A')}</h2>
+                <p style="color:#9AA0A6;">Score: {model_meta.get('best_score', 0):.4f}</p>
+                <p style="color:#9AA0A6;">Task: {model_meta.get('task', 'N/A').title()}</p>
             </div>
             """, unsafe_allow_html=True)
 
@@ -595,11 +476,11 @@ with tab_monitoring:
     # Style the activity log
     def style_activity(row):
         if row['status'] == 'success':
-            return ['background-color: #d4edda'] * len(row)
+            return ['background-color: rgba(16, 185, 129, 0.15); color: #a7f3d0'] * len(row)
         elif row['status'] == 'warning':
-            return ['background-color: #fff3cd'] * len(row)
+            return ['background-color: rgba(245, 158, 11, 0.15); color: #fde68a'] * len(row)
         else:
-            return ['background-color: #f8d7da'] * len(row)
+            return ['background-color: rgba(239, 68, 68, 0.15); color: #fca5a5'] * len(row)
 
     st.dataframe(
         activity_df.style.apply(style_activity, axis=1),
@@ -652,8 +533,7 @@ with tab_monitoring:
 # =====================================================
 # FOOTER
 # =====================================================
-st.markdown("---")
-st.caption(
-    "🚀 Industrial ML Dashboard • Real-time Monitoring • Enterprise Analytics • "
-    f"Dataset: {dataset_id} • Last Updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-)
+# =====================================================
+# FOOTER
+# =====================================================
+page_footer()

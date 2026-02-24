@@ -209,6 +209,7 @@
 #         else:
 #             st.success("No auto-filled fields.")
 
+
 import streamlit as st
 import requests
 import pandas as pd
@@ -216,9 +217,12 @@ import plotly.express as px
 import json
 from io import StringIO
 
-API = "http://127.0.0.1:8000/api"
+API = "http://127.0.0.1:8001/api"
 
 st.set_page_config(page_title="OmniSearch AI – Predict", layout="wide")
+
+from theme import inject_theme, page_header, page_footer
+inject_theme()
 
 # =====================================================
 # SESSION STATE INITIALIZATION (MANDATORY - SAME AS EDA.PY)
@@ -244,7 +248,7 @@ model_meta = st.session_state.model_meta
 # =====================================================
 # HEADER
 # =====================================================
-st.markdown("# 🎯 Enterprise Prediction Engine")
+page_header("🎯", "Enterprise Prediction Engine", "Real-time ML Inference • Batch Processing • Confidence Scoring")
 
 # ✅ Safe access with fallback chain
 best_model = model_meta.get('best_model', 'Unknown')
@@ -296,7 +300,7 @@ with pred_tabs[0]:
             user_input = st.text_input(
                 label=f,
                 value=display_default,
-                key=f"single_{f}",
+                key=f"single_{dataset_id}_{f}",
             )
             # Clean and convert input
             if user_input and user_input.strip():

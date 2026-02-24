@@ -1,7 +1,7 @@
 # import streamlit as st
 # import requests
 
-# API = "http://127.0.0.1:8000/api"
+# API = "http://127.0.0.1:8001/api"
 
 # st.set_page_config(
 #     layout="wide",
@@ -124,11 +124,14 @@ import plotly.express as px
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import IsolationForest
 
-API = "http://127.0.0.1:8000/api"
+API = "http://127.0.0.1:8001/api"
 
 st.set_page_config(layout="wide", page_title="OmniSearch AI — Enterprise ETL")
 
-st.markdown("## 🧹 Enterprise ETL Pipeline")
+from theme import inject_theme, page_header, page_footer
+inject_theme()
+
+page_header("⚙️", "Enterprise ETL Pipeline", "Dedup • Imputation • Outlier Handling • Quality Scoring")
 
 dataset_id = st.session_state.get("dataset_id")
 if not dataset_id:

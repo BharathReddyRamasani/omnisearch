@@ -6,7 +6,7 @@
 # import json
 # from datetime import datetime
 
-# API = "http://127.0.0.1:8000/api"
+# API = "http://127.0.0.1:8001/api"
 
 # st.set_page_config(
 #     page_title="OmniSearch AI - Enterprise EDA",
@@ -231,13 +231,16 @@ from sklearn.covariance import EllipticEnvelope
 from scipy.stats import zscore
 from scipy.spatial.distance import mahalanobis
 
-API = "http://127.0.0.1:8000/api"
+API = "http://127.0.0.1:8001/api"
 
 st.set_page_config(
     page_title="OmniSearch AI – Enterprise EDA",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+from theme import inject_theme, page_header, page_footer
+inject_theme()
 
 # =====================================================
 # SESSION STATE INITIALIZATION (CRITICAL - MUST BE FIRST)
@@ -258,18 +261,7 @@ dataset_id = st.session_state.dataset_id
 # =====================================================
 # HEADER
 # =====================================================
-st.markdown(
-    """
-<div style="background:linear-gradient(90deg,#0f2027,#203a43,#2c5364);
-padding:2.5rem;border-radius:18px;color:white;text-align:center;">
-<h1 style="margin:0;font-size:3rem;">📊 Enterprise EDA Intelligence</h1>
-<p style="margin-top:8px;font-size:1.2rem;opacity:.9;">
-Outliers • Clustering • Feature Impact • Executive Analytics
-</p>
-</div>
-""",
-    unsafe_allow_html=True,
-)
+page_header("📊", "Enterprise EDA Intelligence", "Outliers • Clustering • Feature Impact • Executive Analytics")
 
 # =====================================================
 # SIDEBAR
@@ -587,6 +579,12 @@ with tabs[3]:
                 st.info("Try selecting different features from the list above or refresh the EDA analysis.")
             else:
                 # ✅ Industrial-grade NaN handling for anomaly detection
+                # Explicitly coerce to numeric to handle '3+' or other dirty data
+                # Check dtypes and convert object columns that should be numeric
+                for col in df_anom.columns:
+                    if df_anom[col].dtype == 'object':
+                         df_anom[col] = pd.to_numeric(df_anom[col], errors='coerce')
+
                 # Drop rows with any missing values in selected features
                 df_anom_clean = df_anom.dropna()
                 
@@ -598,6 +596,8 @@ with tabs[3]:
                         st.info(f"ℹ️ Removed {missing_count} rows with missing values for anomaly detection")
                     
                     scaler = StandardScaler()
+                    # Ensure data is float type for scaler
+                    df_anom_clean = df_anom_clean.astype(float)
                     X_scaled = scaler.fit_transform(df_anom_clean)
 
                     method = st.selectbox("Anomaly Method", ["Isolation Forest", "One-Class SVM", "Local Outlier Factor"])
@@ -677,6 +677,8 @@ with tabs[4]:
         else:
             # Use the actual column name from the loaded dataframe (handles case mismatches)
             actual_feature = df_out.columns[0]
+            # Coerce to numeric
+            df_out[actual_feature] = pd.to_numeric(df_out[actual_feature], errors='coerce')
             data = df_out[actual_feature].dropna()
 
             if method == "Boxplot":
@@ -770,4 +772,4 @@ st.download_button(
     "application/json",
 )
 
-st.caption("Enterprise EDA • Unsupervised Intelligence • Audit-Ready • Null-Safe")
+page_footer()

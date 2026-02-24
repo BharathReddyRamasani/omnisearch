@@ -256,28 +256,28 @@ class TrainingConfig:
                     "LogisticRegression": {"max_iter": 1000, "random_state": 42},
                     "DecisionTree": {"max_depth": 10, "random_state": 42},
                     "RandomForest": {"n_estimators": 50, "max_depth": 10, "random_state": 42, "n_jobs": -1},
-                    "GradientBoosting": {"n_estimators": 50, "max_depth": 3, "random_state": 42},
+                    "GradientBoosting": {"n_estimators": 50, "max_depth": 5, "random_state": 42},
                     "NaiveBayes": {},
                 },
                 "medium": {
                     "LogisticRegression": {"max_iter": 1000, "random_state": 42},
                     "DecisionTree": {"max_depth": 15, "random_state": 42},
                     "RandomForest": {"n_estimators": 100, "max_depth": 15, "random_state": 42, "n_jobs": -1},
-                    "GradientBoosting": {"n_estimators": 100, "max_depth": 4, "random_state": 42},
+                    "GradientBoosting": {"n_estimators": 100, "max_depth": 7, "random_state": 42},
                     "NaiveBayes": {},
                 },
                 "large": {
                     "LogisticRegression": {"max_iter": 1000, "random_state": 42},
                     "DecisionTree": {"max_depth": 20, "random_state": 42},
                     "RandomForest": {"n_estimators": 200, "max_depth": 20, "random_state": 42, "n_jobs": -1},
-                    "GradientBoosting": {"n_estimators": 200, "max_depth": 5, "random_state": 42},
+                    "GradientBoosting": {"n_estimators": 200, "max_depth": 9, "random_state": 42},
                     "NaiveBayes": {},
                 },
                 "xlarge": {
                     "LogisticRegression": {"max_iter": 1000, "random_state": 42},
                     "DecisionTree": {"max_depth": 25, "random_state": 42},
                     "RandomForest": {"n_estimators": 300, "max_depth": 25, "random_state": 42, "n_jobs": -1},
-                    "GradientBoosting": {"n_estimators": 300, "max_depth": 6, "random_state": 42},
+                    "GradientBoosting": {"n_estimators": 300, "max_depth": 10, "random_state": 42},
                     "NaiveBayes": {},
                 }
             },
@@ -414,7 +414,7 @@ def extract_feature_importance(pipe, raw_columns: List, task: str) -> Dict:
 # =====================================================
 # CROSS-VALIDATION METRICS
 # =====================================================
-def compute_cv_metrics(pipe, X, y, task: str, cv_folds: int = 5) -> Dict:
+def compute_cv_metrics(pipe, X, y, task: str, cv_folds: int = 10) -> Dict:
     """Compute cross-validation metrics"""
     try:
         if task == "classification":
@@ -524,40 +524,54 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
         valid_mask = ~y.isna()
         X, y = X[valid_mask], y[valid_mask]
         
+        # ✅ FIX 8: Replace inf/-inf with NaN so SimpleImputer handles them
+        X = X.replace([np.inf, -np.inf], np.nan)
+        
         if len(X) < 20:
             return {"status": "failed", "error": "Insufficient data (minimum 20 rows)"}
         
-        # ✅ IMPROVED TASK DETECTION (dtype + cardinality + explicit override)
+        # ✅ FIX 5: FORCE CLASSIFICATION FOR STRING/OBJECT TARGETS
+        # String targets cannot be used in regression (LinearRegression etc. crash)
         if task is None:
-            # Heuristic: check dtype first
-            if pd.api.types.is_bool_dtype(y) or pd.api.types.is_integer_dtype(y):
-                # Integer/bool likely classification if few unique values
-                if y.nunique() <= 15:
-                    task = "classification"
-                else:
-                    task = "regression"
+            if y.dtype == object or y.dtype.name == 'category':
+                # String/categorical target → always classification
+                task = "classification"
+            elif pd.api.types.is_bool_dtype(y) or pd.api.types.is_integer_dtype(y):
+                task = "classification" if y.nunique() <= 15 else "regression"
             elif pd.api.types.is_float_dtype(y):
-                # Float is almost always regression
                 task = "regression"
             else:
-                # Categorical/object: check cardinality
-                if y.nunique() <= 15:
-                    task = "classification"
-                else:
-                    task = "regression"
+                task = "classification" if y.nunique() <= 15 else "regression"
+        
+        # If user forced regression but target is string, override to classification
+        if task == "regression" and y.dtype == object:
+            task = "classification"
         
         # Validate task
         if task not in ["classification", "regression"]:
             return {"status": "failed", "error": "task must be 'classification' or 'regression'"}
         
         # ✅ RESOLVE ID COLUMN NAMES (FROM METADATA - single source of truth)
-        # detected_id_columns contains normalized names, but we need original names for the clean CSV
         id_columns_normalized = upload_meta.get("detected_id_columns", [])
         id_columns_original = [reverse_mapping.get(col, col) for col in id_columns_normalized]
         
         for col in id_columns_original:
             if col in X.columns:
                 X = X.drop(columns=[col])
+        
+        # ✅ FIX 2: DROP HIGH-CARDINALITY CATEGORICAL COLUMNS
+        # Columns with >50 unique values (e.g. names, addresses) create
+        # thousands of one-hot columns → OOM and provide no ML signal
+        high_card_cols = []
+        cat_cols_all = X.select_dtypes(include="object").columns.tolist()
+        for col in cat_cols_all:
+            n_unique = X[col].nunique()
+            if n_unique > 50:
+                high_card_cols.append(col)
+                X = X.drop(columns=[col])
+        
+        if high_card_cols:
+            print(f"[TRAINING] Dropped {len(high_card_cols)} high-cardinality columns: {high_card_cols}")
         
         # Check dataset drift (using features only)
         drift_check = detect_dataset_drift(dataset_id, X)
@@ -566,6 +580,9 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
         if time_limit_seconds is None:
             time_limit_seconds = TrainingConfig.get_timeout_seconds(len(X))
         set_timeout(time_limit_seconds)
+        
+        # ✅ FIX 4: Adaptive n_jobs (avoid OOM on large datasets)
+        n_jobs = 1 if len(X) > 50000 else -1
         
         # Preprocessing
         num_cols = X.select_dtypes(include="number").columns.tolist()
@@ -578,7 +595,7 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
             ]), num_cols),
             ("cat", Pipeline([
                 ("imp", SimpleImputer(strategy="most_frequent")),
-                ("oh", OneHotEncoder(handle_unknown="ignore", sparse_output=False))
+                ("oh", OneHotEncoder(handle_unknown="ignore", sparse_output=False, max_categories=25))
             ]), cat_cols),
         ], verbose=False)
         
@@ -605,33 +622,77 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
                 "GradientBoosting": GradientBoostingRegressor(**model_configs.get("GradientBoosting", {})),
             }
         
-        # Stratified split for classification
+        # ✅ FIX 1: SAFE STRATIFIED SPLIT (fallback on rare classes)
         if task == "classification":
-            Xtr, Xte, ytr, yte = train_test_split(
-                X, y, test_size=test_size, random_state=random_state,
-                stratify=y, shuffle=True
-            )
+            try:
+                # Filter out classes with <2 samples (can't stratify these)
+                class_counts = y.value_counts()
+                rare_classes = class_counts[class_counts < 2].index.tolist()
+                if rare_classes:
+                    mask = ~y.isin(rare_classes)
+                    X, y = X[mask], y[mask]
+                    print(f"[TRAINING] Removed {len(rare_classes)} rare classes with <2 samples")
+                
+                Xtr, Xte, ytr, yte = train_test_split(
+                    X, y, test_size=test_size, random_state=random_state,
+                    stratify=y, shuffle=True
+                )
+            except ValueError as e:
+                print(f"[TRAINING] Stratified split failed ({e}), falling back to random split")
+                Xtr, Xte, ytr, yte = train_test_split(
+                    X, y, test_size=test_size, random_state=random_state,
+                    shuffle=True
+                )
         else:
             Xtr, Xte, ytr, yte = train_test_split(
                 X, y, test_size=test_size, random_state=random_state,
                 shuffle=True
             )
         
-        # ✅ CAPTURE TRAINING DATA STATISTICS FOR DRIFT DETECTION
+        # ✅ FIX 7: CAPTURE TRAINING DATA STATISTICS (summary only, no raw values)
         training_data_stats = {}
         for col in X.select_dtypes(include="number").columns:
+            col_data = X[col].dropna()
             training_data_stats[col] = {
-                "mean": float(X[col].mean()),
-                "std": float(X[col].std()),
-                "min": float(X[col].min()),
-                "max": float(X[col].max()),
-                "values": X[col].dropna().tolist()[:1000]  # Sample for PSI
+                "mean": float(col_data.mean()) if len(col_data) > 0 else 0.0,
+                "std": float(col_data.std()) if len(col_data) > 1 else 0.0,
+                "min": float(col_data.min()) if len(col_data) > 0 else 0.0,
+                "max": float(col_data.max()) if len(col_data) > 0 else 0.0,
+                "median": float(col_data.median()) if len(col_data) > 0 else 0.0,
+                "count": int(len(col_data)),
             }
         
         # Set reproducibility seeds
         set_reproducibility_seeds(random_state)
         
-        # Train models with both holdout CV
+        # ✅ SPEED OPTIMIZATION: Sample data for model SELECTION phase
+        # The final production model is always trained on ALL data
+        SAMPLE_LIMIT = 5000  # Use 5k samples for model comparison
+        use_sampling = len(Xtr) > SAMPLE_LIMIT
+        
+        if use_sampling:
+            print(f"[TRAINING] Using {SAMPLE_LIMIT}/{len(Xtr)} samples for model selection (full data used for final model)")
+            sample_idx = np.random.RandomState(random_state).choice(len(Xtr), SAMPLE_LIMIT, replace=False)
+            Xtr_sel = Xtr.iloc[sample_idx]
+            ytr_sel = ytr.iloc[sample_idx]
+            # Also sample test set proportionally
+            te_sample = min(len(Xte), max(1000, SAMPLE_LIMIT // 4))
+            te_idx = np.random.RandomState(random_state).choice(len(Xte), te_sample, replace=False)
+            Xte_sel = Xte.iloc[te_idx]
+            yte_sel = yte.iloc[te_idx]
+        else:
+            Xtr_sel, ytr_sel = Xtr, ytr
+            Xte_sel, yte_sel = Xte, yte
+        
+        # ✅ SPEED: Determine CV strategy based on data size
+        # Small (<5k): 5-fold CV | Medium (5-20k): 3-fold CV | Large (>20k): holdout only
+        skip_cv = len(X) > 20000
+        cv_folds_selection = max(2, min(3 if len(X) > 5000 else 5, len(X) // 20))
+        
+        print(f"[TRAINING] Strategy: {'holdout-only' if skip_cv else f'{cv_folds_selection}-fold CV'} | "
+              f"sampling={use_sampling} | n_jobs={n_jobs} | {len(models)} models")
+        
+        # Train models
         leaderboard = []
         best_pipe = None
         best_score = -1e9
@@ -639,71 +700,62 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
         cv_metric_used = False
         best_cv_score = None
         best_holdout_score = None
-  # Track if CV was used for selection
         
         for name, model in models.items():
             try:
                 model_start = time.time()
+                print(f"[TRAINING] Training {name}...")
                 
-                # ✅ FIX 2: PREVENT PREPROCESSING LEAKAGE - CRITICAL
-                # NEVER reuse fitted pipeline for CV. cross_validate clones internally.
-                # Create FRESH pipeline for holdout test (fit on train split)
+                # Create FRESH pipeline — train on SAMPLED data for speed
                 holdout_pipe = Pipeline([
                     ("pre", clone(pre)),
                     ("model", model.__class__(**model.get_params()))
                 ])
-                holdout_pipe.fit(Xtr, ytr)
-                preds = holdout_pipe.predict(Xte)
+                holdout_pipe.fit(Xtr_sel, ytr_sel)
+                preds = holdout_pipe.predict(Xte_sel)
                 
                 # Score on holdout test set
                 if task == "classification":
-                    holdout_score = accuracy_score(yte, preds)
+                    holdout_score = accuracy_score(yte_sel, preds)
                 else:
-                    holdout_score = r2_score(yte, preds)
+                    holdout_score = r2_score(yte_sel, preds)
                 
-                # ✅ COMPUTE CV METRICS for model ranking (prevent leakage)
+                # CV: only if dataset is small/medium enough
                 cv_result = None
                 cv_mean = None
-                try:
-                    if task == "classification":
-                        from sklearn.model_selection import StratifiedKFold
-                        n_splits = max(2, min(5, len(X) // 20))  # ✅ FIX: Enforce n_splits >= 2
-                        cv_splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-                    else:
-                        from sklearn.model_selection import KFold
-                        n_splits = max(2, min(5, len(X) // 20))  # ✅ FIX: Enforce n_splits >= 2
-                        cv_splitter = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
-                    
-                    # ✅ FIX 2: NEVER REUSE FITTED PIPELINE
-                    # Create COMPLETELY FRESH pipeline (never fitted before CV)
-                    # cross_validate will clone it per fold internally
-                    cv_pipe = Pipeline([
-                        ("pre", clone(pre)),
-                        ("model", model.__class__(**model.get_params()))
-                    ])
-                    
-                    # Fit on FULL X (not just train split) for CV
-                    if task == "classification":
+                if not skip_cv:
+                    try:
+                        n_splits = cv_folds_selection
+                        if task == "classification":
+                            cv_splitter = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+                        else:
+                            cv_splitter = KFold(n_splits=n_splits, shuffle=True, random_state=random_state)
+                        
+                        # Use sampled data for CV too
+                        X_cv = pd.concat([Xtr_sel, Xte_sel]) if use_sampling else X
+                        y_cv = pd.concat([ytr_sel, yte_sel]) if use_sampling else y
+                        
+                        cv_pipe = Pipeline([
+                            ("pre", clone(pre)),
+                            ("model", model.__class__(**model.get_params()))
+                        ])
+                        
+                        scoring = "accuracy" if task == "classification" else "r2"
                         cv_scores = cross_validate(
-                            cv_pipe, X, y, cv=cv_splitter, 
-                            scoring="accuracy", n_jobs=-1, return_train_score=True
+                            cv_pipe, X_cv, y_cv, cv=cv_splitter,
+                            scoring=scoring, n_jobs=n_jobs, return_train_score=False
                         )
                         cv_mean = cv_scores['test_score'].mean()
-                    else:
-                        cv_scores = cross_validate(
-                            cv_pipe, X, y, cv=cv_splitter,
-                            scoring="r2", n_jobs=-1, return_train_score=True
-                        )
-                        cv_mean = cv_scores['test_score'].mean()
-                    
-                    cv_result = {
-                        "cv_mean": round(float(cv_mean), 4),
-                        "cv_std": round(float(cv_scores['test_score'].std()), 4),
-                        "cv_fold_scores": [round(float(s), 4) for s in cv_scores['test_score']],
-                        "cv_folds": len(cv_scores['test_score'])
-                    }
-                except Exception as cv_error:
-                    cv_mean = None
+                        
+                        cv_result = {
+                            "cv_mean": round(float(cv_mean), 4),
+                            "cv_std": round(float(cv_scores['test_score'].std()), 4),
+                            "cv_fold_scores": [round(float(s), 4) for s in cv_scores['test_score']],
+                            "cv_folds": len(cv_scores['test_score'])
+                        }
+                    except Exception as cv_error:
+                        print(f"[TRAINING] CV failed for {name}: {cv_error}")
+                        cv_mean = None
                 
                 # Score metadata
                 metrics = {}
@@ -758,6 +810,8 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
 
             
             except Exception as e:
+                # ✅ FIX 6: LOG PER-MODEL FAILURES
+                print(f"[TRAINING] ❌ {name} FAILED: {str(e)}")
                 leaderboard.append({
                     "model": name,
                     "score": None,
@@ -769,15 +823,21 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
         if best_pipe is None:
             return {"status": "failed", "error": "All models failed to train"}
         
-        # ✅ FIX #4: HYPERPARAMETER TUNING WITH RandomizedSearchCV
-        # Even 5-10 iterations gives us real tuning (not just rule-based)
+        # ✅ HYPERPARAMETER TUNING (skip for large datasets — too slow)
         hyperparameter_search_info = {
             "method": "RandomizedSearchCV",
             "iterations": 5,
             "models_tuned": []
         }
         
-        try:
+        skip_tuning = len(X) > 10000  # Skip tuning for datasets > 10k rows
+        if skip_tuning:
+            print(f"[TRAINING] Skipping hyperparameter tuning (dataset has {len(X)} rows > 10k)")
+            hyperparameter_search_info["skipped"] = True
+            hyperparameter_search_info["reason"] = f"Dataset too large ({len(X)} rows)"
+        
+        if not skip_tuning:
+          try:
             # Only tune ensemble methods (they benefit most from tuning)
             tunable_models = {}
             if task == "classification":
@@ -830,55 +890,45 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
             
             for tune_name, tune_config in tunable_models.items():
                 try:
+                    scorer = "accuracy" if task == "classification" else "r2"
+                    hp_n_splits = max(2, min(3, len(Xtr) // 50))
                     if task == "classification":
-                        scorer = "accuracy"
-
                         cv_splitter = StratifiedKFold(
-                            n_splits=min(3, max(2, len(Xtr) // 50)),
-                            shuffle=True,
-                            random_state=random_state
+                            n_splits=hp_n_splits, shuffle=True, random_state=random_state
                         )
                     else:
-                        scorer = "r2"
                         cv_splitter = KFold(
-                            n_splits=min(3, max(2, len(Xtr) // 50)),
-                            shuffle=True,
-                            random_state=random_state
+                            n_splits=hp_n_splits, shuffle=True, random_state=random_state
                         )
 
-                    # ✅ INDUSTRIAL FIX: Wrap model in pipeline for preprocessing-aware tuning
-                    # This ensures tuned model behaves identically to production pipeline
                     tune_pipe = Pipeline([
-                        ("pre", clone(pre)),  # Include preprocessing
+                        ("pre", clone(pre)),
                         ("model", tune_config["model"])
                     ])
                     
-                    # Build parameter grid with pipeline prefix
                     param_grid = {}
                     for param_name, param_values in tune_config["params"].items():
                         param_grid[f"model__{param_name}"] = param_values
                     
-                    # RandomizedSearchCV: 5 iterations only (fast)
+                    hp_n_iter = max(1, min(5, len(Xtr) // 100))
                     
                     search = RandomizedSearchCV(
                         tune_pipe,
                         param_grid,
-                        n_iter=min(5, len(Xtr) // 100),
+                        n_iter=hp_n_iter,
                         cv=cv_splitter,
                         scoring=scorer,
-                        n_jobs=-1,
+                        n_jobs=n_jobs,
                         random_state=random_state,
                         verbose=0
                     )
                     
-                    # Fit on holdout train split (preprocessing happens inside pipeline)
                     search.fit(Xtr, ytr)
                     tuned_score = search.score(Xte, yte)
                     
-                    # If tuned model beats best, use it
                     if tuned_score > best_tuned_score:
                         best_tuned_score = tuned_score
-                        best_tuned_model = search.best_estimator_  # Entire pipeline
+                        best_tuned_model = search.best_estimator_
                         best_tuned_params = search.best_params_
                         best_score = tuned_score
                     
@@ -887,12 +937,12 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
                         "best_params": best_tuned_params,
                         "best_cv_score": round(float(search.best_score_), 4),
                         "test_score": round(float(tuned_score), 4),
-                        "pipeline_aware": True  # ✅ Mark as pipeline-aware
+                        "pipeline_aware": True
                     })
                 except:
-                    pass  # If tuning fails, continue with rule-based
-        except:
-            pass  # If tuning disabled, continue with rule-based
+                    pass
+          except:
+            pass
         
         # Use tuned model if found, else use best rule-based model
         if best_tuned_model is not None:
@@ -918,7 +968,8 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
         importance_data = extract_feature_importance(production_pipe, list(X.columns), task)
         
         # Cross-validation metrics on production model
-        cv_data = compute_cv_metrics(production_pipe, X, y, task, cv_folds=min(5, len(X) // 10))
+        # ✅ FIX 3: Safe cv_folds (enforce >= 2)
+        cv_data = compute_cv_metrics(production_pipe, X, y, task, cv_folds=max(2, min(5, len(X) // 10)))
         
         # Save PRODUCTION model (trained on full dataset)
         root = model_dir(dataset_id)
@@ -960,6 +1011,7 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
             "leaderboard": leaderboard,
             "raw_columns": list(X.columns),
             "dropped_id_columns": id_columns_original,
+            "dropped_high_cardinality_columns": high_card_cols,
             "feature_defaults": extract_defaults(X),
             "feature_importance": importance_data,
             "top_features": importance_data["top_features"],

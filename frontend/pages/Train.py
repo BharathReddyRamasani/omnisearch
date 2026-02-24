@@ -7,13 +7,16 @@ import json
 import time
 from datetime import datetime
 
-API = "http://127.0.0.1:8000/api"
+API = "http://127.0.0.1:8001/api"
 
 st.set_page_config(
     page_title="OmniSearch AI – Industrial AutoML Training",
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+from theme import inject_theme, page_header, page_footer
+inject_theme()
 
 # =====================================================
 # DATASET CHECK
@@ -50,21 +53,7 @@ with st.sidebar:
 # =====================================================
 # HEADER
 # =====================================================
-st.markdown(
-    """
-    <div style="padding:3.5rem;border-radius:20px;
-                background:linear-gradient(135deg,#0052cc 0%,#1e6ed4 50%,#2563eb 100%);
-                color:white;text-align:center;
-                box-shadow: 0 20px 40px rgba(5,82,204,0.2);
-                border: 1px solid rgba(255,255,255,0.1);">
-        <h1 style='margin:0;font-size:3rem;font-weight:800;letter-spacing:-1px;'>🚀 Industrial AutoML Training</h1>
-        <p style='margin:12px 0 0 0;font-size:1.2rem;opacity:0.92;font-weight:500;'>
-            10+ Algorithms • Advanced Metrics • Enterprise-Grade
-        </p>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
+page_header("🚀", "Industrial AutoML Training", "10+ Algorithms • Advanced Metrics • Enterprise-Grade")
 
 st.markdown("---")
 
@@ -299,7 +288,7 @@ with tab_training:
                     progress_bar.progress(10)
                     
                     # Poll job status
-                    max_polls = 600  # 10 minutes with 1-second intervals
+                    max_polls = 120  # 10 minutes with 5-second intervals
                     poll_count = 0
                     
                     while poll_count < max_polls:
@@ -308,7 +297,7 @@ with tab_training:
                             
                             if job_resp.status_code != 200:
                                 st.warning(f"Could not fetch job status: {job_resp.status_code}")
-                                time.sleep(1)
+                                time.sleep(5)
                                 poll_count += 1
                                 continue
                             
@@ -377,7 +366,7 @@ with tab_training:
                                 break
                             
                             # Job still running
-                            time.sleep(1)
+                            time.sleep(5)
                             poll_count += 1
                         
                         except requests.exceptions.Timeout:
@@ -635,8 +624,4 @@ else:
 # =====================================================
 # FOOTER
 # =====================================================
-st.markdown("---")
-st.caption(
-    "Industrial AutoML • Multi-algorithm comparison • Enterprise-grade training • "
-    f"Dataset: {dataset_id} • Models: {len(selected_models)}"
-)
+page_footer()
