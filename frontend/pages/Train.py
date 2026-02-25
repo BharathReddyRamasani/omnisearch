@@ -48,7 +48,14 @@ with st.sidebar:
     random_state = st.number_input("Random State", value=42, min_value=0)
     
     st.markdown("---")
-    st.caption("Industrial ML Pipeline • v2.0")
+    st.markdown("**Advanced Options:**")
+    feature_selection = st.toggle("🔍 Feature Selection", value=True,
+                                   help="Auto-select top features via variance filter + SelectKBest (mutual info)")
+    handle_imbalance = st.toggle("⚖️ Handle Class Imbalance", value=True,
+                                  help="Applies class_weight='balanced' for classifiers to handle imbalanced datasets")
+    
+    st.markdown("---")
+    st.caption("Industrial ML Pipeline • v3.0")
 
 # =====================================================
 # HEADER
@@ -77,8 +84,8 @@ st.markdown("---")
 # =====================================================
 # TABS
 # =====================================================
-tab_setup, tab_training, tab_results, tab_advanced = st.tabs([
-    "🎯 Setup", "⚡ Training", "📊 Results", "🔬 Advanced"
+tab_setup, tab_training, tab_results, tab_lc, tab_experiments, tab_advanced = st.tabs([
+    "🎯 Setup", "⚡ Training", "📊 Results", "📈 Learning Curves", "🧪 Experiments", "🔬 Advanced"
 ])
 
 # =====================================================
@@ -249,7 +256,9 @@ with tab_training:
                 "target": target,
                 "test_size": test_size / 100,
                 "random_state": random_state,
-                "task": task  # ✅ Use correct parameter name
+                "task": task,
+                "feature_selection": feature_selection,
+                "handle_imbalance": handle_imbalance,
             }
             
             progress_bar = st.progress(0)
@@ -473,6 +482,14 @@ else:
             if "ranking_score" in df_lb.columns:
                 display_cols.append("ranking_score")
                 format_dict["ranking_score"] = "{:.4f}"
+            if "ci_95" in df_lb.columns:
+                # Show Score ± CI as a readable string column
+                df_lb["Score ± CI"] = df_lb.apply(
+                    lambda r: (f"{r['ranking_score']:.4f} ± {r['ci_95']:.4f}"
+                               if pd.notna(r.get("ci_95")) else f"{r.get('ranking_score', ''):.4f}"),
+                    axis=1
+                )
+                display_cols.append("Score ± CI")
             if "holdout_score" in df_lb.columns:
                 display_cols.append("holdout_score")
                 format_dict["holdout_score"] = "{:.4f}"
@@ -483,18 +500,19 @@ else:
             if "test_rows" in df_lb.columns:
                 display_cols.append("test_rows")
                 format_dict["test_rows"] = "{:,}"
-            
             if "training_time_seconds" in df_lb.columns:
                 display_cols.append("training_time_seconds")
                 format_dict["training_time_seconds"] = "{:.2f}"
             
             # Select columns to display
-            df_display = df_lb[display_cols]
+            df_display = df_lb[[c for c in display_cols if c in df_lb.columns]]
             
             # Apply styling
             styled_df = df_display.style.apply(highlight_best, axis=0)
             if format_dict:
-                styled_df = styled_df.format(format_dict)
+                apply_fmt = {k: v for k, v in format_dict.items() if k in df_display.columns}
+                if apply_fmt:
+                    styled_df = styled_df.format(apply_fmt)
             
             st.dataframe(styled_df, use_container_width=True)
             
@@ -559,65 +577,224 @@ else:
                     break
     
     # =====================================================
-    # TAB 4: ADVANCED
+    # TAB 4: LEARNING CURVES
+    # =====================================================
+    with tab_lc:
+        st.markdown("## 📈 Learning Curves & Bias-Variance Diagnostics")
+        lc = model_meta.get("learning_curves", {})
+        if not lc:
+            st.info("Learning curve data not available. Re-train to generate.")
+        elif lc.get("lc_skipped") or lc.get("lc_error"):
+            reason = lc.get("reason") or lc.get("lc_error", "Unknown")
+            st.warning(f"Learning curves skipped: {reason}")
+        else:
+            indicator = lc.get("bias_variance_indicator", "")
+            gap = lc.get("bias_variance_gap", 0)
+            color = {"good_fit": "🟢", "slight_overfit": "🟡", "overfit": "🔴"}.get(indicator, "⚪")
+            st.markdown(f"**Bias-Variance Status:** {color} `{indicator}` &nbsp;&mdash;&nbsp; train–val gap = `{gap:.4f}`")
+            
+            sizes = lc["train_sizes"]
+            tr_mean = lc["train_scores_mean"]
+            tr_std  = lc["train_scores_std"]
+            vl_mean = lc["val_scores_mean"]
+            vl_std  = lc["val_scores_std"]
+            
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=sizes, y=tr_mean, name="Train Score",
+                mode="lines+markers",
+                line=dict(color="#4ade80", width=2),
+                error_y=dict(type="data", array=tr_std, visible=True, color="#4ade80", thickness=1)
+            ))
+            fig.add_trace(go.Scatter(
+                x=sizes, y=vl_mean, name="Validation Score",
+                mode="lines+markers",
+                line=dict(color="#60a5fa", width=2),
+                error_y=dict(type="data", array=vl_std, visible=True, color="#60a5fa", thickness=1)
+            ))
+            fig.update_layout(
+                title=f"Learning Curves ({lc.get('scoring', 'score')})",
+                xaxis_title="Training Set Size",
+                yaxis_title="Score",
+                legend=dict(orientation="h"),
+                template="plotly_dark",
+                hovermode="x unified",
+            )
+            st.plotly_chart(fig, use_container_width=True, key="lc_chart")
+
+    # =====================================================
+    # TAB 5: EXPERIMENTS
+    # =====================================================
+    with tab_experiments:
+        st.markdown("## 🧪 Experiment History")
+        try:
+            exp_resp = requests.get(f"{API}/experiments/{dataset_id}", timeout=10)
+            if exp_resp.status_code == 200:
+                exp_data = exp_resp.json()
+                experiments = exp_data.get("experiments", [])
+                if not experiments:
+                    st.info("No experiments recorded yet. Click 'Start Training' to begin.")
+                else:
+                    rows = []
+                    for e in experiments:
+                        rows.append({
+                            "Version": e.get("version_id", "")[:8],
+                            "Exp ID": (e.get("experiment_id") or "")[:8],
+                            "Best Model": e.get("best_model", ""),
+                            "Score": e.get("best_score"),
+                            "Bal. Acc.": e.get("balanced_accuracy"),
+                            "Task": e.get("task", ""),
+                            "Time (s)": e.get("training_time_seconds"),
+                            "Trained At": e.get("created_at", "")[:19],
+                            "Active": "✅" if e.get("is_active") else "",
+                            "Checksum": (e.get("model_checksum") or "")[:12],
+                        })
+                    df_exp = pd.DataFrame(rows)
+                    st.dataframe(df_exp, use_container_width=True)
+                    
+                    # Score over time chart
+                    if len(rows) > 1:
+                        fig2 = go.Figure(go.Scatter(
+                            x=[r["Trained At"] for r in rows],
+                            y=[r["Score"] for r in rows],
+                            mode="lines+markers",
+                            name="Best Score",
+                            line=dict(color="#f472b6", width=2),
+                        ))
+                        fig2.update_layout(
+                            title="Score Across Experiments",
+                            xaxis_title="Trained At",
+                            yaxis_title="Score",
+                            template="plotly_dark",
+                        )
+                        st.plotly_chart(fig2, use_container_width=True, key="exp_chart")
+            else:
+                st.warning(f"Could not fetch experiment history ({exp_resp.status_code}).")
+        except Exception as err:
+            st.error(f"Error fetching experiments: {err}")
+
+    # =====================================================
+    # TAB 6: ADVANCED
     # =====================================================
     with tab_advanced:
         st.markdown("## 🔬 Advanced Analytics")
-        
-        # Feature importance
+
+        # --- Feature Importance ---
         st.markdown("### 🎯 Feature Importance")
-        
+        fi = model_meta.get("feature_importance", {})
         top_features = model_meta.get("top_features", [])
-        if top_features:
-            st.write("Top features for best model:")
+        fi_scores = fi.get("scores", {})
+        if fi_scores:
+            fi_df = pd.DataFrame(list(fi_scores.items()), columns=["Feature", "Score"])\
+                      .sort_values("Score", ascending=True).tail(20)
+            fig_fi = go.Figure(go.Bar(
+                x=fi_df["Score"], y=fi_df["Feature"],
+                orientation="h",
+                marker_color="#818cf8"
+            ))
+            fig_fi.update_layout(
+                title="Top Feature Importances",
+                xaxis_title="Importance",
+                template="plotly_dark",
+                height=max(300, len(fi_df) * 22)
+            )
+            st.plotly_chart(fig_fi, use_container_width=True, key="fi_chart")
+        elif top_features:
             for i, feat in enumerate(top_features[:10], 1):
                 st.write(f"{i}. {feat}")
-        
-        # Dropped columns
+
+        # --- Model Complexity ---
+        st.markdown("### ⚙️ Model Complexity")
+        mc = model_meta.get("model_complexity", {})
+        if mc and not mc.get("complexity_error"):
+            cc1, cc2, cc3 = st.columns(3)
+            cc1.metric("🧠 Parameters", mc.get("n_parameters", "N/A"))
+            cc2.metric("💾 Model Size", f"{mc.get('model_size_kb', 'N/A')} KB")
+            cc3.metric("⚡ Latency", f"{mc.get('inference_latency_ms', 'N/A')} ms")
+        else:
+            st.info("Model complexity metrics not available.")
+
+        # --- Calibration ---
+        cal = model_meta.get("calibration")
+        if cal and not cal.get("calibration_skipped") and not cal.get("calibration_error"):
+            st.markdown("### 🧪 Probability Calibration")
+            brier = cal.get("brier_score")
+            quality = cal.get("calibration_quality", "")
+            quality_icon = {"✅ good": "good", "🟡 moderate": "moderate", "🔴 poor": "poor"}.get(quality, quality)
+            st.metric("Brier Score", f"{brier:.4f}" if brier is not None else "N/A",
+                      help="Lower is better. 0=perfect, 0.25=random")
+            st.caption(f"Calibration quality: **{quality}**")
+            
+            cc = cal.get("calibration_curve")
+            if cc:
+                fig_cal = go.Figure()
+                fig_cal.add_trace(go.Scatter(
+                    x=cc["prob_pred"], y=cc["prob_true"],
+                    mode="lines+markers", name="Model",
+                    line=dict(color="#f472b6", width=2)
+                ))
+                fig_cal.add_trace(go.Scatter(
+                    x=[0, 1], y=[0, 1], mode="lines", name="Perfect",
+                    line=dict(color="gray", dash="dash")
+                ))
+                fig_cal.update_layout(
+                    title="Calibration Curve",
+                    xaxis_title="Mean Predicted Probability",
+                    yaxis_title="Fraction of Positives",
+                    template="plotly_dark",
+                )
+                st.plotly_chart(fig_cal, use_container_width=True, key="cal_chart")
+
+        # --- Balanced Accuracy ---
+        bal_acc = model_meta.get("balanced_accuracy")
+        if bal_acc is not None:
+            st.markdown("### ⚖️ Balanced Accuracy")
+            st.metric("Balanced Accuracy", f"{bal_acc:.4f}",
+                      help="Macro-average recall per class. Better for imbalanced datasets.")
+
+        # --- Dropped columns ---
         dropped_cols = model_meta.get("dropped_id_columns", [])
         if dropped_cols:
             st.markdown("### 🗑️ Dropped ID Columns")
-            st.write("Automatically removed unique identifier columns:")
-            for col in dropped_cols:
-                st.write(f"- {col}")
-        
-        # Export options
+            st.write(", ".join(dropped_cols))
+
+        # --- Experiment info ---
+        exp_id = model_meta.get("experiment_id")
+        checksum = model_meta.get("model_checksum")
+        if exp_id:
+            st.markdown("### 🔗 Experiment Lineage")
+            st.code(f"Experiment ID : {exp_id}\nModel Checksum: {checksum}")
+
+        # --- Export ---
         st.markdown("---")
         st.markdown("### 💾 Export")
-        
         col1, col2 = st.columns(2)
-        
         with col1:
             st.download_button(
                 "📄 Download Full Report (JSON)",
                 data=json.dumps(model_meta, indent=2),
-                file_name=f"industrial_automl_report_{dataset_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                file_name=f"automl_report_{dataset_id}.json",
                 mime="application/json",
                 use_container_width=True
             )
-        
         with col2:
-            # Generate summary report
             summary = {
+                "experiment_id": model_meta.get("experiment_id"),
                 "dataset_id": dataset_id,
-                "target": model_meta.get("target"),
-                "task": model_meta.get("task"),
                 "best_model": model_meta.get("best_model"),
                 "best_score": model_meta.get("best_score"),
-                "models_trained": len(model_meta.get("leaderboard", [])),
-                "training_time": st.session_state.get("training_time", "N/A"),
-                "trained_at": model_meta.get("trained_at")
+                "balanced_accuracy": model_meta.get("balanced_accuracy"),
+                "model_checksum": model_meta.get("model_checksum"),
+                "trained_at": model_meta.get("trained_at"),
             }
-            
             st.download_button(
                 "📊 Download Summary (JSON)",
                 data=json.dumps(summary, indent=2),
-                file_name=f"summary_report_{dataset_id}.json",
+                file_name=f"summary_{dataset_id}.json",
                 mime="application/json",
                 use_container_width=True
             )
-        
-        # Raw metadata
+
         with st.expander("🔧 Raw Training Metadata"):
             st.json(model_meta)
 

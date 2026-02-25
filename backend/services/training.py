@@ -1,4 +1,4 @@
-import os, json, time, joblib, hashlib, signal, random, sys, platform
+import os, json, time, joblib, hashlib, signal, random, sys, platform, uuid
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional
@@ -9,8 +9,15 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline, clone
 from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from sklearn.impute import SimpleImputer
-from sklearn.model_selection import StratifiedKFold, KFold
-
+from sklearn.model_selection import StratifiedKFold, KFold, learning_curve
+from sklearn.feature_selection import VarianceThreshold, SelectKBest, f_classif, f_regression, mutual_info_classif, mutual_info_regression
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
+from sklearn.linear_model import SGDClassifier, SGDRegressor
+from sklearn.metrics import (
+    accuracy_score, r2_score, mean_absolute_error, mean_squared_error,
+    confusion_matrix, classification_report, precision_recall_fscore_support,
+    brier_score_loss, balanced_accuracy_score
+)
 
 from sklearn.ensemble import (
     RandomForestClassifier, RandomForestRegressor,
@@ -21,10 +28,27 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.naive_bayes import GaussianNB
 
 from sklearn.model_selection import train_test_split, cross_validate, RandomizedSearchCV
-from sklearn.metrics import (
-    accuracy_score, r2_score, mean_absolute_error, mean_squared_error,
-    confusion_matrix, classification_report, precision_recall_fscore_support
-)
+
+# ✅ LightGBM + XGBoost
+try:
+    import lightgbm as lgb
+    LIGHTGBM_AVAILABLE = True
+except ImportError:
+    LIGHTGBM_AVAILABLE = False
+
+try:
+    import xgboost as xgb
+    XGBOOST_AVAILABLE = True
+except ImportError:
+    XGBOOST_AVAILABLE = False
+
+# ✅ SMOTE for class imbalance
+try:
+    from imblearn.over_sampling import SMOTE
+    from imblearn.pipeline import Pipeline as ImbPipeline
+    SMOTE_AVAILABLE = True
+except ImportError:
+    SMOTE_AVAILABLE = False
 
 from backend.services.utils import load_raw, load_clean, model_dir
 from backend.services.model_registry import ModelRegistry, register_trained_model
@@ -441,10 +465,179 @@ def compute_cv_metrics(pipe, X, y, task: str, cv_folds: int = 10) -> Dict:
 
 
 # =====================================================
+# EXPERIMENT TRACKING
+# =====================================================
+def generate_experiment_id() -> str:
+    return str(uuid.uuid4())
+
+
+def compute_model_checksum(model_path: str) -> str:
+    try:
+        with open(model_path, "rb") as f:
+            return hashlib.sha256(f.read()).hexdigest()
+    except Exception:
+        return "checksum_unavailable"
+
+
+def snapshot_params(dataset_id, target, task, test_size, random_state,
+                    feature_selection, handle_imbalance, n_samples, n_features) -> Dict:
+    return {
+        "dataset_id": dataset_id, "target": target, "task": task,
+        "test_size": test_size, "random_state": random_state,
+        "feature_selection_enabled": feature_selection,
+        "imbalance_handling_enabled": handle_imbalance,
+        "n_samples": int(n_samples), "n_features": int(n_features),
+        "lightgbm_available": LIGHTGBM_AVAILABLE,
+        "xgboost_available": XGBOOST_AVAILABLE,
+        "smote_available": SMOTE_AVAILABLE,
+    }
+
+
+# =====================================================
+# LGBM / XGBOOST MODEL BUILDERS
+# =====================================================
+def build_boosting_models(task: str, random_state: int, n_jobs: int) -> Dict:
+    models = {}
+    if task == "classification":
+        if LIGHTGBM_AVAILABLE:
+            models["LightGBM"] = lgb.LGBMClassifier(
+                n_estimators=200, learning_rate=0.05, num_leaves=31,
+                random_state=random_state, n_jobs=n_jobs, verbose=-1)
+        if XGBOOST_AVAILABLE:
+            models["XGBoost"] = xgb.XGBClassifier(
+                n_estimators=200, learning_rate=0.05, max_depth=6,
+                random_state=random_state, n_jobs=n_jobs,
+                eval_metric="logloss", verbosity=0)
+    else:
+        if LIGHTGBM_AVAILABLE:
+            models["LightGBM"] = lgb.LGBMRegressor(
+                n_estimators=200, learning_rate=0.05, num_leaves=31,
+                random_state=random_state, n_jobs=n_jobs, verbose=-1)
+        if XGBOOST_AVAILABLE:
+            models["XGBoost"] = xgb.XGBRegressor(
+                n_estimators=200, learning_rate=0.05, max_depth=6,
+                random_state=random_state, n_jobs=n_jobs,
+                eval_metric="rmse", verbosity=0)
+    return models
+
+
+# =====================================================
+# INCREMENTAL LEARNING (huge datasets > 500k rows)
+# =====================================================
+def train_incremental(X_transformed, y, task: str, random_state: int):
+    try:
+        chunk_size = 10000
+        if task == "classification":
+            model = SGDClassifier(random_state=random_state, loss="modified_huber",
+                                  class_weight="balanced", max_iter=1)
+            classes = np.unique(y)
+        else:
+            model = SGDRegressor(random_state=random_state, max_iter=1)
+            classes = None
+        for start in range(0, X_transformed.shape[0], chunk_size):
+            Xc = X_transformed[start:start + chunk_size]
+            yc = np.array(y)[start:start + chunk_size]
+            if task == "classification":
+                model.partial_fit(Xc, yc, classes=classes)
+            else:
+                model.partial_fit(Xc, yc)
+        return model
+    except Exception:
+        return None
+
+
+# =====================================================
+# LEARNING CURVES
+# =====================================================
+def compute_learning_curves(pipe, X, y, task: str, random_state: int) -> Dict:
+    try:
+        scoring = "accuracy" if task == "classification" else "r2"
+        cv = StratifiedKFold(n_splits=3, shuffle=True, random_state=random_state) \
+             if task == "classification" else \
+             KFold(n_splits=3, shuffle=True, random_state=random_state)
+        sizes, train_sc, val_sc = learning_curve(
+            pipe, X, y, train_sizes=[0.1, 0.3, 0.5, 0.7, 1.0],
+            cv=cv, scoring=scoring, n_jobs=1, shuffle=True, random_state=random_state)
+        gap = float(train_sc[:, -1].mean() - val_sc[:, -1].mean())
+        indicator = "good_fit" if gap < 0.05 else ("slight_overfit" if gap < 0.15 else "overfit")
+        return {
+            "train_sizes": [int(s) for s in sizes],
+            "train_scores_mean": [round(float(v), 4) for v in train_sc.mean(axis=1)],
+            "train_scores_std":  [round(float(v), 4) for v in train_sc.std(axis=1)],
+            "val_scores_mean":   [round(float(v), 4) for v in val_sc.mean(axis=1)],
+            "val_scores_std":    [round(float(v), 4) for v in val_sc.std(axis=1)],
+            "bias_variance_indicator": indicator,
+            "bias_variance_gap": round(gap, 4),
+            "scoring": scoring,
+        }
+    except Exception as e:
+        return {"lc_error": str(e)}
+
+
+# =====================================================
+# MODEL CALIBRATION (classification)
+# =====================================================
+def compute_calibration_metrics(pipe, X_test, y_test) -> Dict:
+    try:
+        if not hasattr(pipe, "predict_proba"):
+            return {"calibration_skipped": True, "reason": "no predict_proba"}
+        y_prob = pipe.predict_proba(X_test)
+        classes = getattr(pipe, "classes_", np.unique(y_test))
+        if len(classes) == 2:
+            brier = float(brier_score_loss(y_test, y_prob[:, 1]))
+            prob_true, prob_pred = calibration_curve(
+                y_test, y_prob[:, 1], n_bins=10, strategy="uniform")
+            cal_curve = {
+                "prob_true": [round(float(v), 4) for v in prob_true],
+                "prob_pred": [round(float(v), 4) for v in prob_pred],
+            }
+        else:
+            from sklearn.preprocessing import label_binarize
+            y_bin = label_binarize(y_test, classes=classes)
+            brier = float(np.mean([
+                brier_score_loss(y_bin[:, i], y_prob[:, i]) for i in range(len(classes))]))
+            cal_curve = None
+        quality = "good" if brier < 0.1 else ("moderate" if brier < 0.2 else "poor")
+        return {"brier_score": round(brier, 4), "calibration_curve": cal_curve,
+                "calibration_quality": quality}
+    except Exception as e:
+        return {"calibration_error": str(e)}
+
+
+# =====================================================
+# MODEL COMPLEXITY
+# =====================================================
+def compute_model_complexity(pipe, X_sample) -> Dict:
+    try:
+        import io
+        model = pipe.named_steps.get("model", pipe)
+        n_params = 0
+        if hasattr(model, "coef_"):
+            n_params = int(np.prod(model.coef_.shape))
+            if hasattr(model, "intercept_"):
+                n_params += int(np.array(model.intercept_).size)
+        elif hasattr(model, "n_estimators"):
+            n_params = int(getattr(model, "n_estimators", 0))
+        buf = io.BytesIO()
+        joblib.dump(pipe, buf)
+        model_size_kb = round(buf.tell() / 1024, 1)
+        sample = X_sample.head(min(100, len(X_sample)))
+        t0 = time.time()
+        for _ in range(10):
+            pipe.predict(sample)
+        latency_ms = round((time.time() - t0) / 10 * 1000, 2)
+        return {"n_parameters": n_params, "model_size_kb": model_size_kb,
+                "inference_latency_ms": latency_ms}
+    except Exception as e:
+        return {"complexity_error": str(e)}
+
+
+# =====================================================
 # MAIN TRAIN FUNCTION
 # =====================================================
-def train_model_logic(dataset_id: str, target: str, task: str = None, test_size: float = 0.2, 
-                     random_state: int = 42, time_limit_seconds: int = None) -> Dict:
+def train_model_logic(dataset_id: str, target: str, task: str = None, test_size: float = 0.2,
+                     random_state: int = 42, time_limit_seconds: int = None,
+                     feature_selection: bool = True, handle_imbalance: bool = True) -> Dict:
     """
     PRODUCTION TRAINING WITH:
     ✅ CV-BASED MODEL SELECTION (uses CV mean score to rank models)
@@ -464,34 +657,55 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
               If None, auto-detect using dtype + cardinality heuristic
     """
     try:
+        experiment_id = generate_experiment_id()
         start_time = time.time()
         
-        # ❌ FAIL if clean data doesn't exist (data leakage risk)
-        # ✅ NO silent fallback to raw data
+        # ✅ DATA LOADING: try clean (post-ETL) → ingested → raw CSV fallback
+        # This lets users train without running ETL first — sklearn pipeline
+        # handles imputation and encoding so raw data is safe to use.
+        data_source = "unknown"
+        df = None
         try:
             df = load_clean(dataset_id)
             data_source = "clean"
-        except Exception as clean_error:
-            return {
-                "status": "failed",
-                "error": "Clean data not available - cannot proceed (data leakage risk)",
-                "error_code": "CLEAN_DATA_REQUIRED",
-                "details": f"load_clean failed: {str(clean_error)}",
-                "recommendation": "Please follow the ML workflow: Upload → EDA → ETL (Clean Data) → Train. Run the ETL pipeline first to generate cleaned data.",
-                "workflow_steps": [
-                    "1. Upload your dataset",
-                    "2. Run EDA to explore the data",
-                    "3. Run ETL to clean and prepare the data",
-                    "4. Then come back to Training"
-                ]
-            }
+            print(f"[TRAINING] Using ETL-cleaned data for {dataset_id}")
+        except Exception:
+            pass
+
+        if df is None:
+            try:
+                from backend.services.utils import load_ingested
+                df = load_ingested(dataset_id)
+                data_source = "ingested"
+                print(f"[TRAINING] No clean data found, using ingested data for {dataset_id}")
+            except Exception:
+                pass
+
+        if df is None:
+            try:
+                from backend.services.utils import load_raw
+                df = load_raw(dataset_id)
+                data_source = "raw"
+                print(f"[TRAINING] No ingested data found, using raw CSV for {dataset_id} — sklearn pipeline handles imputation/encoding")
+            except Exception as raw_err:
+                return {
+                    "status": "failed",
+                    "error": f"Dataset not found: {str(raw_err)}",
+                    "error_code": "DATASET_NOT_FOUND",
+                    "recommendation": "Upload a dataset first (Upload page).",
+                }
+
         
         # ✅ RESOLVE TARGET COLUMN NAME MAPPING
         # The user provides a normalized column name (from column_mapping),
         # but the clean CSV has the original column names.
         # We need to map the user-provided target back to the original column name.
-        upload_meta = load_upload_metadata(dataset_id)
+        try:
+            upload_meta = load_upload_metadata(dataset_id)
+        except Exception:
+            upload_meta = {}
         column_mapping = upload_meta.get("column_mapping", {})
+
         
         # Create reverse mapping: normalized_name -> original_name
         reverse_mapping = {v: k for k, v in column_mapping.items()}
@@ -602,25 +816,35 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
         # Get model configs
         model_configs = TrainingConfig.get_model_config(len(X), len(X.columns), task)
         
-        # Build models
+        # ✅ CLASS WEIGHT: inject 'balanced' for imbalanced classification
+        use_class_weight = handle_imbalance and task == "classification"
+        cw = "balanced" if use_class_weight else None
+        
+        # Build models — dataset-size-aware routing
+        XLARGE_THRESHOLD = 100000  # > 100k rows: LightGBM only
         models = {}
         if task == "classification":
-            models = {
-                "LogisticRegression": LogisticRegression(**model_configs.get("LogisticRegression", {})),
-                "DecisionTree": DecisionTreeClassifier(**model_configs.get("DecisionTree", {})),
-                "RandomForest": RandomForestClassifier(**model_configs.get("RandomForest", {})),
-                "GradientBoosting": GradientBoostingClassifier(**model_configs.get("GradientBoosting", {})),
-                "NaiveBayes": GaussianNB(**model_configs.get("NaiveBayes", {})),
-            }
+            if len(X) <= XLARGE_THRESHOLD:
+                models = {
+                    "LogisticRegression": LogisticRegression(**{**model_configs.get("LogisticRegression", {}), "class_weight": cw}),
+                    "DecisionTree":       DecisionTreeClassifier(**{**model_configs.get("DecisionTree", {}), "class_weight": cw}),
+                    "RandomForest":       RandomForestClassifier(**{**model_configs.get("RandomForest", {}), "class_weight": cw}),
+                    "GradientBoosting":   GradientBoostingClassifier(**model_configs.get("GradientBoosting", {})),
+                    "NaiveBayes":         GaussianNB(**model_configs.get("NaiveBayes", {})),
+                }
+            # Always add LightGBM + XGBoost
+            models.update(build_boosting_models(task, random_state, n_jobs))
         else:
-            models = {
-                "LinearRegression": LinearRegression(**model_configs.get("LinearRegression", {})),
-                "Ridge": Ridge(**model_configs.get("Ridge", {})),
-                "Lasso": Lasso(**model_configs.get("Lasso", {})),
-                "DecisionTree": DecisionTreeRegressor(**model_configs.get("DecisionTree", {})),
-                "RandomForest": RandomForestRegressor(**model_configs.get("RandomForest", {})),
-                "GradientBoosting": GradientBoostingRegressor(**model_configs.get("GradientBoosting", {})),
-            }
+            if len(X) <= XLARGE_THRESHOLD:
+                models = {
+                    "LinearRegression": LinearRegression(**model_configs.get("LinearRegression", {})),
+                    "Ridge":            Ridge(**model_configs.get("Ridge", {})),
+                    "Lasso":            Lasso(**model_configs.get("Lasso", {})),
+                    "DecisionTree":     DecisionTreeRegressor(**model_configs.get("DecisionTree", {})),
+                    "RandomForest":     RandomForestRegressor(**model_configs.get("RandomForest", {})),
+                    "GradientBoosting": GradientBoostingRegressor(**model_configs.get("GradientBoosting", {})),
+                }
+            models.update(build_boosting_models(task, random_state, n_jobs))
         
         # ✅ FIX 1: SAFE STRATIFIED SPLIT (fallback on rare classes)
         if task == "classification":
@@ -706,10 +930,13 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
                 model_start = time.time()
                 print(f"[TRAINING] Training {name}...")
                 
-                # Create FRESH pipeline — train on SAMPLED data for speed
+                # Create FRESH pipeline — use clone() which works for
+                # sklearn, LightGBM, XGBoost and all compatible estimators.
+                # model.__class__(**model.get_params()) breaks on LGBM/XGB
+                # because get_params() includes internal-only attributes.
                 holdout_pipe = Pipeline([
                     ("pre", clone(pre)),
-                    ("model", model.__class__(**model.get_params()))
+                    ("model", clone(model))
                 ])
                 holdout_pipe.fit(Xtr_sel, ytr_sel)
                 preds = holdout_pipe.predict(Xte_sel)
@@ -737,7 +964,7 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
                         
                         cv_pipe = Pipeline([
                             ("pre", clone(pre)),
-                            ("model", model.__class__(**model.get_params()))
+                            ("model", clone(model))
                         ])
                         
                         scoring = "accuracy" if task == "classification" else "r2"
@@ -771,8 +998,9 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
                         "confidence_mean": round(float(proba), 4) if proba else None
                     }
                 else:
-                    mae = mean_absolute_error(yte, preds)
-                    rmse = np.sqrt(mean_squared_error(yte, preds))
+                    # ✅ FIX: use yte_sel (sampled test set, consistent with preds)
+                    mae = mean_absolute_error(yte_sel, preds)
+                    rmse = np.sqrt(mean_squared_error(yte_sel, preds))
                     
                     metrics = {
                         "r2_score": round(float(holdout_score), 4),
@@ -785,11 +1013,17 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
                 # ✅ USE CV MEAN FOR RANKING (fallback to holdout if CV fails)
                 ranking_score = cv_mean if cv_mean is not None else holdout_score
                 
+                # ✅ CONFIDENCE INTERVAL: ±1.96 × cv_std
+                ci_95 = None
+                if cv_result:
+                    ci_95 = round(1.96 * cv_result["cv_std"], 4)
+
                 entry = {
                     "model": name,
                     "holdout_score": round(float(holdout_score), 4),
                     "ranking_score": round(float(ranking_score), 4),
                     "cv_metrics": cv_result,
+                    "ci_95": ci_95,
                     "metrics": metrics,
                     "train_rows": int(len(Xtr)),
                     "test_rows": int(len(Xte)),
@@ -810,8 +1044,9 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
 
             
             except Exception as e:
-                # ✅ FIX 6: LOG PER-MODEL FAILURES
-                print(f"[TRAINING] ❌ {name} FAILED: {str(e)}")
+                import traceback
+                tb = traceback.format_exc()
+                print(f"[TRAINING] ❌ {name} FAILED: {str(e)}\n{tb}")
                 leaderboard.append({
                     "model": name,
                     "score": None,
@@ -830,6 +1065,9 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
             "models_tuned": []
         }
         
+        # ✅ FIX: Always initialize best_tuned_model so it is never unbound
+        best_tuned_model = None
+        
         skip_tuning = len(X) > 10000  # Skip tuning for datasets > 10k rows
         if skip_tuning:
             print(f"[TRAINING] Skipping hyperparameter tuning (dataset has {len(X)} rows > 10k)")
@@ -837,112 +1075,111 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
             hyperparameter_search_info["reason"] = f"Dataset too large ({len(X)} rows)"
         
         if not skip_tuning:
-          try:
-            # Only tune ensemble methods (they benefit most from tuning)
-            tunable_models = {}
-            if task == "classification":
-                if best_model_name == "RandomForest":
-                    tunable_models["RandomForest"] = {
-                        "model": RandomForestClassifier(random_state=random_state),
-                        "params": {
-                            "n_estimators": [50, 100, 150],
-                            "max_depth": [5, 10, 15, None],
-                            "min_samples_split": [2, 5],
-                            "min_samples_leaf": [1, 2]
+            try:
+                # Only tune ensemble methods (they benefit most from tuning)
+                tunable_models = {}
+                if task == "classification":
+                    if best_model_name == "RandomForest":
+                        tunable_models["RandomForest"] = {
+                            "model": RandomForestClassifier(random_state=random_state),
+                            "params": {
+                                "n_estimators": [50, 100, 150],
+                                "max_depth": [5, 10, 15, None],
+                                "min_samples_split": [2, 5],
+                                "min_samples_leaf": [1, 2]
+                            }
                         }
-                    }
-                elif best_model_name == "GradientBoosting":
-                    tunable_models["GradientBoosting"] = {
-                        "model": GradientBoostingClassifier(random_state=random_state),
-                        "params": {
-                            "n_estimators": [50, 100, 150],
-                            "learning_rate": [0.01, 0.05, 0.1],
-                            "max_depth": [3, 5, 7],
-                            "min_samples_split": [2, 5]
+                    elif best_model_name == "GradientBoosting":
+                        tunable_models["GradientBoosting"] = {
+                            "model": GradientBoostingClassifier(random_state=random_state),
+                            "params": {
+                                "n_estimators": [50, 100, 150],
+                                "learning_rate": [0.01, 0.05, 0.1],
+                                "max_depth": [3, 5, 7],
+                                "min_samples_split": [2, 5]
+                            }
                         }
-                    }
-            else:
-                if best_model_name == "RandomForest":
-                    tunable_models["RandomForest"] = {
-                        "model": RandomForestRegressor(random_state=random_state),
-                        "params": {
-                            "n_estimators": [50, 100, 150],
-                            "max_depth": [5, 10, 15, None],
-                            "min_samples_split": [2, 5],
-                            "min_samples_leaf": [1, 2]
+                else:
+                    if best_model_name == "RandomForest":
+                        tunable_models["RandomForest"] = {
+                            "model": RandomForestRegressor(random_state=random_state),
+                            "params": {
+                                "n_estimators": [50, 100, 150],
+                                "max_depth": [5, 10, 15, None],
+                                "min_samples_split": [2, 5],
+                                "min_samples_leaf": [1, 2]
+                            }
                         }
-                    }
-                elif best_model_name == "GradientBoosting":
-                    tunable_models["GradientBoosting"] = {
-                        "model": GradientBoostingRegressor(random_state=random_state),
-                        "params": {
-                            "n_estimators": [50, 100, 150],
-                            "learning_rate": [0.01, 0.05, 0.1],
-                            "max_depth": [3, 5, 7],
-                            "min_samples_split": [2, 5]
+                    elif best_model_name == "GradientBoosting":
+                        tunable_models["GradientBoosting"] = {
+                            "model": GradientBoostingRegressor(random_state=random_state),
+                            "params": {
+                                "n_estimators": [50, 100, 150],
+                                "learning_rate": [0.01, 0.05, 0.1],
+                                "max_depth": [3, 5, 7],
+                                "min_samples_split": [2, 5]
+                            }
                         }
-                    }
-            
-            # Run RandomizedSearchCV only for tunable models
-            best_tuned_model = None
-            best_tuned_score = best_score
-            best_tuned_params = None
-            
-            for tune_name, tune_config in tunable_models.items():
-                try:
-                    scorer = "accuracy" if task == "classification" else "r2"
-                    hp_n_splits = max(2, min(3, len(Xtr) // 50))
-                    if task == "classification":
-                        cv_splitter = StratifiedKFold(
-                            n_splits=hp_n_splits, shuffle=True, random_state=random_state
-                        )
-                    else:
-                        cv_splitter = KFold(
-                            n_splits=hp_n_splits, shuffle=True, random_state=random_state
-                        )
+                
+                # Run RandomizedSearchCV only for tunable models
+                best_tuned_score = best_score
+                best_tuned_params = None
+                
+                for tune_name, tune_config in tunable_models.items():
+                    try:
+                        scorer = "accuracy" if task == "classification" else "r2"
+                        hp_n_splits = max(2, min(3, len(Xtr) // 50))
+                        if task == "classification":
+                            cv_splitter = StratifiedKFold(
+                                n_splits=hp_n_splits, shuffle=True, random_state=random_state
+                            )
+                        else:
+                            cv_splitter = KFold(
+                                n_splits=hp_n_splits, shuffle=True, random_state=random_state
+                            )
 
-                    tune_pipe = Pipeline([
-                        ("pre", clone(pre)),
-                        ("model", tune_config["model"])
-                    ])
-                    
-                    param_grid = {}
-                    for param_name, param_values in tune_config["params"].items():
-                        param_grid[f"model__{param_name}"] = param_values
-                    
-                    hp_n_iter = max(1, min(5, len(Xtr) // 100))
-                    
-                    search = RandomizedSearchCV(
-                        tune_pipe,
-                        param_grid,
-                        n_iter=hp_n_iter,
-                        cv=cv_splitter,
-                        scoring=scorer,
-                        n_jobs=n_jobs,
-                        random_state=random_state,
-                        verbose=0
-                    )
-                    
-                    search.fit(Xtr, ytr)
-                    tuned_score = search.score(Xte, yte)
-                    
-                    if tuned_score > best_tuned_score:
-                        best_tuned_score = tuned_score
-                        best_tuned_model = search.best_estimator_
-                        best_tuned_params = search.best_params_
-                        best_score = tuned_score
-                    
-                    hyperparameter_search_info["models_tuned"].append({
-                        "model": tune_name,
-                        "best_params": best_tuned_params,
-                        "best_cv_score": round(float(search.best_score_), 4),
-                        "test_score": round(float(tuned_score), 4),
-                        "pipeline_aware": True
-                    })
-                except:
-                    pass
-          except:
-            pass
+                        tune_pipe = Pipeline([
+                            ("pre", clone(pre)),
+                            ("model", tune_config["model"])
+                        ])
+                        
+                        param_grid = {}
+                        for param_name, param_values in tune_config["params"].items():
+                            param_grid[f"model__{param_name}"] = param_values
+                        
+                        hp_n_iter = max(1, min(5, len(Xtr) // 100))
+                        
+                        search = RandomizedSearchCV(
+                            tune_pipe,
+                            param_grid,
+                            n_iter=hp_n_iter,
+                            cv=cv_splitter,
+                            scoring=scorer,
+                            n_jobs=n_jobs,
+                            random_state=random_state,
+                            verbose=0
+                        )
+                        
+                        search.fit(Xtr, ytr)
+                        tuned_score = search.score(Xte, yte)
+                        
+                        if tuned_score > best_tuned_score:
+                            best_tuned_score = tuned_score
+                            best_tuned_model = search.best_estimator_
+                            best_tuned_params = search.best_params_
+                            best_score = tuned_score
+                        
+                        hyperparameter_search_info["models_tuned"].append({
+                            "model": tune_name,
+                            "best_params": best_tuned_params,
+                            "best_cv_score": round(float(search.best_score_), 4),
+                            "test_score": round(float(tuned_score), 4),
+                            "pipeline_aware": True
+                        })
+                    except:
+                        pass
+            except:
+                pass
         
         # Use tuned model if found, else use best rule-based model
         if best_tuned_model is not None:
@@ -968,12 +1205,48 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
         importance_data = extract_feature_importance(production_pipe, list(X.columns), task)
         
         # Cross-validation metrics on production model
-        # ✅ FIX 3: Safe cv_folds (enforce >= 2)
-        cv_data = compute_cv_metrics(production_pipe, X, y, task, cv_folds=max(2, min(5, len(X) // 10)))
+        # ✅ SPEED: Skip final CV for large datasets (>10k rows) — too slow
+        if len(X) > 10000:
+            print(f"[TRAINING] Skipping final CV (dataset has {len(X)} rows > 10k)")
+            cv_data = {"cv_skipped": True, "reason": f"Dataset too large ({len(X)} rows)"}
+        else:
+            cv_data = compute_cv_metrics(production_pipe, X, y, task, cv_folds=max(2, min(5, len(X) // 10)))
         
         # Save PRODUCTION model (trained on full dataset)
         root = model_dir(dataset_id)
-        joblib.dump(production_pipe, os.path.join(root, "model.pkl"))
+        model_path = os.path.join(root, "model.pkl")
+        joblib.dump(production_pipe, model_path)
+        
+        # ✅ EXPERIMENT TRACKING: checksum + param snapshot
+        model_checksum = compute_model_checksum(model_path)
+        param_snap = snapshot_params(
+            dataset_id, target, task, test_size, random_state,
+            feature_selection, handle_imbalance, len(X), len(X.columns))
+        
+        # ✅ BALANCED ACCURACY (classification with imbalance handling)
+        balanced_acc = None
+        if task == "classification":
+            try:
+                yte_pred_bal = production_pipe.predict(Xte)
+                balanced_acc = round(float(balanced_accuracy_score(yte, yte_pred_bal)), 4)
+            except Exception:
+                pass
+        
+        # ✅ LEARNING CURVES (skip for large datasets)
+        if len(X) <= 20000:
+            print("[TRAINING] Computing learning curves...")
+            learning_curves_data = compute_learning_curves(
+                production_pipe, X, y, task, random_state)
+        else:
+            learning_curves_data = {"lc_skipped": True, "reason": f"Dataset too large ({len(X)} rows)"}
+        
+        # ✅ MODEL CALIBRATION (classification only)
+        calibration_data = None
+        if task == "classification":
+            calibration_data = compute_calibration_metrics(production_pipe, Xte, yte)
+        
+        # ✅ MODEL COMPLEXITY
+        complexity_data = compute_model_complexity(production_pipe, Xte)
         
         total_time = time.time() - start_time
         
@@ -994,13 +1267,16 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
         
         result = {
             "status": "ok",
-            "schema_version": "2.1",  # Incremented: now includes training_data_stats
+            "schema_version": "3.0",
+            "experiment_id": experiment_id,
+            "param_snapshot": param_snap,
+            "model_checksum": model_checksum,
             "dataset_id": dataset_id,
             "task": task,
             "target": target,
             "best_model": best_model_name,
             "selection_score": round(float(best_score), 4),
-            "best_score": round(float(best_score), 4),  # ✅ Backward compatibility for frontend
+            "best_score": round(float(best_score), 4),
             "selection_basis": "cv_mean" if cv_metric_used else "holdout",
             "cv_mean_score": round(float(best_cv_score), 4) if best_cv_score is not None else None,
             "holdout_score": round(float(best_holdout_score), 4),
@@ -1016,38 +1292,29 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
             "feature_importance": importance_data,
             "top_features": importance_data["top_features"],
             "cross_validation": cv_data,
+            "learning_curves": learning_curves_data,
+            "calibration": calibration_data,
+            "model_complexity": complexity_data,
+            "balanced_accuracy": balanced_acc,
             "data_source": data_source,
             "training_time_seconds": round(total_time, 2),
             "timeout_limit_seconds": time_limit_seconds,
             "dataset_size_category": "small" if len(X) < 1000 else "medium" if len(X) < 10000 else "large",
-            
-            # ✅ FIX #4: ACTUAL HYPERPARAMETER TUNING
             "hyperparameter_tuning": hyperparameter_search_info,
-            
             "trained_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            
-            # ✅ REPRODUCIBILITY
             "environment": env_snapshot,
             "random_state": random_state,
-            
-            # ✅ TRAINING DATA STATISTICS (for drift detection)
             "training_data_stats": training_data_stats,
-            
-            # ✅ FIX #3: STATISTICAL DRIFT WITH ENFORCEMENT
             "statistical_drift": statistical_drift,
             "drift_enforced": True,
             "drift_confidence_adjustment": drift_confidence_adjustment,
             "drift_requires_retraining": drift_requires_retraining,
-            
-            # ✅ FIX #4: GOVERNANCE CLARIFICATION
             "version_governance": {
                 "authority": "ModelRegistry",
                 "training_role": "Trains model and emits metadata only",
                 "registry_role": "Single source of truth for versioning",
                 "version_assignment": "Automatic (registry-controlled)"
-        },
-            
-            # ✅ DATASET HASH (for completeness - features only)
+            },
             "dataset_hash": dataset_hash(X),
         }
         

@@ -512,6 +512,8 @@ def train(dataset_id: str, payload: dict):
     random_state = payload.get("random_state", 42)
     task = payload.get("task")  # None = auto-detect, "classification", or "regression"
     time_limit_seconds = payload.get("time_limit_seconds")
+    feature_selection = payload.get("feature_selection", True)
+    handle_imbalance = payload.get("handle_imbalance", True)
 
     # Submit background job
     job_id = submit_training_job(
@@ -520,7 +522,9 @@ def train(dataset_id: str, payload: dict):
         test_size=test_size,
         random_state=random_state,
         task=task,
-        time_limit_seconds=time_limit_seconds
+        time_limit_seconds=time_limit_seconds,
+        feature_selection=feature_selection,
+        handle_imbalance=handle_imbalance,
     )
     
     return safe({
@@ -602,6 +606,23 @@ def rollback_model_version(dataset_id: str, payload: dict):
     if result["status"] != "ok":
         raise HTTPException(400, result["error"])
     return safe(result)
+
+# =====================================================
+# EXPERIMENT TRACKING
+# =====================================================
+@api_router.get("/experiments/{dataset_id}")
+def list_experiments(dataset_id: str):
+    """Return full experiment history for a dataset."""
+    from backend.services.model_registry import get_experiment_history
+    return safe({"status": "ok", "experiments": get_experiment_history(dataset_id)})
+
+
+@api_router.get("/experiments/{dataset_id}/compare")
+def compare_experiment_runs(dataset_id: str):
+    """Return a ranked comparison of all experiment runs."""
+    from backend.services.model_registry import compare_experiments
+    return safe(compare_experiments(dataset_id))
+
 
 # =====================================================
 # PREDICT

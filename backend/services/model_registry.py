@@ -235,3 +235,43 @@ def get_model_history(dataset_id: str) -> List[Dict]:
 def rollback_model(dataset_id: str, version_id: str) -> Dict:
     """Rollback to a previous model version"""
     return ModelRegistry.set_active_version(dataset_id, version_id)
+
+
+def get_experiment_history(dataset_id: str) -> List[Dict]:
+    """Return all experiment runs for a dataset with full tracking metadata."""
+    versions = ModelRegistry.get_model_versions(dataset_id)
+    active = ModelRegistry.load_registry()["models"].get(dataset_id, {}).get("active_version")
+    history = []
+    for v in versions:
+        meta = v.get("metadata", {})
+        history.append({
+            "version_id": v["version_id"],
+            "experiment_id": meta.get("experiment_id"),
+            "created_at": v["created_at"],
+            "best_model": meta.get("best_model"),
+            "best_score": meta.get("best_score"),
+            "balanced_accuracy": meta.get("balanced_accuracy"),
+            "task": meta.get("task"),
+            "training_time_seconds": meta.get("training_time_seconds"),
+            "model_checksum": meta.get("model_checksum"),
+            "param_snapshot": meta.get("param_snapshot"),
+            "is_active": v["version_id"] == active,
+        })
+    return history
+
+
+def compare_experiments(dataset_id: str) -> Dict:
+    """Compare all experiment runs — returns a ranked comparison table."""
+    history = get_experiment_history(dataset_id)
+    if not history:
+        return {"status": "no_experiments", "dataset_id": dataset_id}
+    runs = sorted(
+        [h for h in history if h.get("best_score") is not None],
+        key=lambda x: x["best_score"], reverse=True
+    )
+    return {
+        "dataset_id": dataset_id,
+        "total_runs": len(history),
+        "best_run": runs[0] if runs else None,
+        "runs": runs,
+    }
