@@ -332,7 +332,7 @@ def fetch_model_meta(ds):
 def load_sample(ds, cols=None, n=20000):
     # Use cached eda to determine source
     eda_data = fetch_eda(ds)
-    source = "clean" if eda_data.get("etl_complete", False) else "raw"
+    source = "clean" if eda_data.get("data_source") == "clean" else "ingested"
 
     r = requests.get(f"{API}/datasets/{ds}/download/{source}", timeout=120)
     r.raise_for_status()
@@ -719,57 +719,84 @@ with tabs[4]:
                 st.plotly_chart(fig, use_container_width=True)
 
             elif method == "Mahalanobis":
-                if len(num_features) >= 2:
-                    with tabs[3]:
-                        st.markdown("## 🔍 Anomaly Detection")
-                        num_features = [f for f, v in eda["summary"].items() if v is not None and isinstance(v.get("mean"), (int, float))]
-                        if num_features:
-                            selected = st.multiselect(
-                                "Select features for anomaly detection",
-                                num_features,
-                                default=num_features[: min(3, len(num_features))],
-                                max_selections=5,
+                st.info("Mahalanobis distance outlier detection is not currently supported in this version.")
+
+# =====================================================
+# TAB 6: FEATURE ANALYSIS
+# =====================================================
+with tabs[5]:
+    st.markdown("## 🔗 Feature Analysis")
+    st.write("Understand the relationships and distributions of your dataset's features.")
+    
+    import base64
+    from io import BytesIO
+    
+    if "visualizations" in eda and "heatmap" in eda["visualizations"] and eda["visualizations"]["heatmap"]:
+        st.markdown("### Correlation Heatmap")
+        img_bytes = base64.b64decode(eda["visualizations"]["heatmap"])
+        st.image(BytesIO(img_bytes), use_column_width=True)
+    else:
+        st.info("Correlation heatmap not available. Ensure your dataset has at least 2 numeric features.")
+        
+    if "visualizations" in eda and "boxplot" in eda["visualizations"] and eda["visualizations"]["boxplot"]:
+        st.markdown("### Numeric Distributions (Boxplots)")
+        img_bytes = base64.b64decode(eda["visualizations"]["boxplot"])
+        st.image(BytesIO(img_bytes), use_column_width=True)
+
+# =====================================================
+# TAB 7: EXPORTS
+# =====================================================
+with tabs[6]:
+    st.markdown("## 📥 Download Reports")
+    st.write("Export your EDA results in various formats.")
+    
+    c1, c2 = st.columns(2)
+    
+    with c1:
+        st.markdown("### JSON Report")
+        st.write("Comprehensive machine-readable report containing all raw profile metrics.")
+        import json
+        json_report = json.dumps({
+            "eda": eda,
+            "etl": etl or "Not run",
+            "model": model_meta or "Not trained",
+            "generated_at": datetime.now().isoformat(),
+        }, indent=2, default=str)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        
+        st.download_button(
+            "Download Full JSON Report",
+            json_report,
+            f"EDA_Report_{dataset_id}_{timestamp}.json",
+            "application/json",
+            key="json_download_fixed"
+        )
+        
+    with c2:
+        st.markdown("### HTML Report")
+        st.write("Human-readable interactive HTML report of the EDA findings.")
+        
+        if st.button("Generate HTML Report"):
+            with st.spinner("Generating HTML Report..."):
+                try:
+                    # Attempt to get HTML from backend if endpoint supports it, otherwise fallback
+                    resp = requests.post(f"{API}/datasets/{dataset_id}/profile", timeout=60)
+                    if resp.status_code == 200:
+                        profile_data = resp.json()
+                        if "html_report" in profile_data:
+                            html_report = profile_data["html_report"]
+                            st.download_button(
+                                "Download HTML Report",
+                                html_report,
+                                f"EDA_Report_{dataset_id}_{timestamp}.html",
+                                "text/html",
+                                key="html_download_fixed"
                             )
-                            method = st.selectbox("Anomaly Method", ["Isolation Forest", "One-Class SVM", "Local Outlier Factor"])
-                            contamination = st.slider("Contamination", 0.01, 0.5, 0.1, 0.01) if method != "One-Class SVM" else None
-                            if st.button("Detect Anomalies"):
-                                with st.spinner("Detecting anomalies (backend)..."):
-                                    payload = {"features": selected, "method": method}
-                                    if contamination:
-                                        payload["contamination"] = contamination
-                                    resp = requests.post(f"{API}/eda/anomaly/{dataset_id}", json=payload, timeout=120)
-                                    result = resp.json()
-                                    if resp.status_code == 200 and result.get("status") == "ok":
-                                        import base64
-                                        from io import BytesIO
-                                        img_bytes = base64.b64decode(result["plot_base64"])
-                                        st.image(BytesIO(img_bytes), caption=f"{method} Anomaly Detection (PCA)")
-                                        st.write("Labels:", result["labels"][:10], "...")
-                                    elif result.get("status") == "failed":
-                                        if "missing_features" in result:
-                                            st.error(f"Feature(s) not available: {', '.join(result['missing_features'])}")
-                                        else:
-                                            st.error(f"Anomaly detection failed: {result.get('error')}")
-                                    else:
-                                        st.error("Anomaly detection failed: " + resp.text)
                         else:
-                            st.info("Need at least 1 numeric feature.")
-
-# ========== EXPORTS (FIXED) ========== #
-import json
-json_report = json.dumps({
-    "eda": eda,
-    "etl": etl or "Not run",
-    "model": model_meta or "Not trained",
-    "generated_at": datetime.now().isoformat(),
-}, indent=2, default=str)
-timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-
-st.download_button(
-    "Download Full JSON Report",
-    json_report,
-    f"EDA_Report_{dataset_id}_{timestamp}.json",
-    "application/json",
-)
+                            st.error("HTML report format not supported by backend.")
+                    else:
+                        st.error("Endpoint not available for HTML generation.")
+                except Exception as e:
+                    st.error(f"Failed to generate HTML: {e}")
 
 page_footer()

@@ -91,16 +91,16 @@ st.markdown("## 📈 **Real-Time KPIs**")
 # Fetch data for metrics
 try:
     # Get dataset info
-    info_resp = requests.get(f"{API}/datasets/{dataset_id}/info", timeout=5)
+    info_resp = requests.get(f"{API}/datasets/{dataset_id}/info", timeout=60)
     dataset_info = info_resp.json() if info_resp.status_code == 200 else {}
 
     # Get EDA data - Extract from nested 'eda' key if present
-    eda_resp = requests.get(f"{API}/eda/{dataset_id}", timeout=10)
+    eda_resp = requests.get(f"{API}/eda/{dataset_id}", timeout=60)
     eda_response = eda_resp.json() if eda_resp.status_code == 200 else {}
     eda_data = eda_response.get('eda', eda_response)  # Handle both nested and flat responses
 
     # Get model metadata
-    meta_resp = requests.get(f"{API}/meta/{dataset_id}", timeout=5)
+    meta_resp = requests.get(f"{API}/meta/{dataset_id}", timeout=60)
     model_meta = meta_resp.json() if meta_resp.status_code == 200 else {}
 
 except Exception as e:
@@ -244,6 +244,42 @@ with tab_overview:
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+    # Downloads section
+    st.markdown("### 📥 **Downloads**")
+    dl_col1, dl_col2 = st.columns(2)
+    
+    with dl_col1:
+        st.markdown("#### Cleaned Dataset")
+        try:
+            res_clean = requests.get(f"{API}/datasets/{dataset_id}/download/clean", timeout=60)
+            if res_clean.status_code == 200:
+                st.download_button(
+                    label="⬇️ Download Cleaned CSV",
+                    data=res_clean.content,
+                    file_name=f"{dataset_id}_clean.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.warning("Cleaned dataset not available yet. Please complete ETL.")
+        except Exception:
+            st.error("Failed to connect to backend.")
+
+    with dl_col2:
+        st.markdown("#### Trained Model")
+        try:
+            res_model = requests.get(f"{API}/models/{dataset_id}/download", timeout=60)
+            if res_model.status_code == 200:
+                st.download_button(
+                    label="⬇️ Download Model (pkl)",
+                    data=res_model.content,
+                    file_name=f"{dataset_id}_model.pkl",
+                    mime="application/octet-stream"
+                )
+            else:
+                st.warning("Trained model not available yet. Please complete Training.")
+        except Exception:
+            st.error("Failed to connect to backend.")
 
 # =====================================================
 # TAB 2: ANALYTICS
@@ -460,33 +496,7 @@ with tab_monitoring:
     with monitor_col4:
         st.metric("Network I/O", "1.2 MB/s", "↑0.1 MB/s")
 
-    # Activity log
-    st.markdown("### 📝 **Recent Activity Log**")
 
-    activities = [
-        {"time": "2024-01-09 14:32:15", "action": "Model training completed", "user": "Data Scientist", "status": "success"},
-        {"time": "2024-01-09 14:28:42", "action": "EDA analysis finished", "user": "ML Engineer", "status": "success"},
-        {"time": "2024-01-09 14:25:18", "action": "Dataset uploaded", "user": "Analyst", "status": "success"},
-        {"time": "2024-01-09 14:20:05", "action": "ETL pipeline executed", "user": "Data Scientist", "status": "success"},
-        {"time": "2024-01-09 14:15:33", "action": "Prediction batch completed", "user": "ML Engineer", "status": "warning"}
-    ]
-
-    activity_df = pd.DataFrame(activities)
-
-    # Style the activity log
-    def style_activity(row):
-        if row['status'] == 'success':
-            return ['background-color: rgba(16, 185, 129, 0.15); color: #a7f3d0'] * len(row)
-        elif row['status'] == 'warning':
-            return ['background-color: rgba(245, 158, 11, 0.15); color: #fde68a'] * len(row)
-        else:
-            return ['background-color: rgba(239, 68, 68, 0.15); color: #fca5a5'] * len(row)
-
-    st.dataframe(
-        activity_df.style.apply(style_activity, axis=1),
-        use_container_width=True,
-        hide_index=True
-    )
 
     # Performance trends
     st.markdown("### 📈 **Performance Trends**")

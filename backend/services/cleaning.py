@@ -15,6 +15,7 @@ import numpy as np
 from typing import Dict, Any, List, Optional
 from datetime import datetime
 from backend.services.utils import datasetdir, load_raw
+from backend.services.ingest import convert_numpy_to_python
 
 
 class CleaningConfig:
@@ -323,7 +324,7 @@ def clean_with_config(dataset_id: str, config: Optional[CleaningConfig] = None) 
     # Save report
     report_path = os.path.join(ddir, "comparison.json")
     with open(report_path, "w") as f:
-        json.dump(report, f, indent=2)
+        json.dump(convert_numpy_to_python(report), f, indent=2)
     
     return {
         "status": "ok",

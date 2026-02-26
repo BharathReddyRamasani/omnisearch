@@ -207,7 +207,13 @@ def load_raw(dataset_id: str) -> pd.DataFrame:
     path = raw_path(dataset_id)
     if not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Raw dataset not found")
-    return pd.read_csv(path)
+    
+    try:
+        # Auto-detect delimiters (tabs, semicolons, etc)
+        return pd.read_csv(path, sep=None, engine='python')
+    except Exception:
+        # Fallback to default
+        return pd.read_csv(path)
 
 
 def load_clean(dataset_id: str) -> pd.DataFrame:

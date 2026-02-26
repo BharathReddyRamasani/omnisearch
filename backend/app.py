@@ -398,13 +398,23 @@ def download(dataset_id: str, kind: str):
         p = raw_path(dataset_id)
     elif kind == "clean":
         p = os.path.join(datasetdir(dataset_id), "clean.csv")
+    elif kind == "ingested":
+        p = os.path.join(datasetdir(dataset_id), "ingested.csv")
     else:
-        raise HTTPException(400, "Invalid download type: raw or clean only")
+        raise HTTPException(400, "Invalid download type: raw, clean, or ingested only")
 
     if not os.path.exists(p):
         raise HTTPException(404, f"{kind.capitalize()} file not found")
 
     return FileResponse(p, filename=f"{dataset_id}_{kind}.csv")
+
+@api_router.get("/models/{dataset_id}/download")
+def download_model(dataset_id: str):
+    root = model_dir(dataset_id)
+    model_path = os.path.join(root, "model.pkl")
+    if not os.path.exists(model_path):
+        raise HTTPException(404, "Trained model not found")
+    return FileResponse(model_path, filename=f"{dataset_id}_model.pkl")
 
 # =====================================================
 # COMPARISON (RAW vs CLEAN)

@@ -7,7 +7,7 @@ from scipy import stats
 
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline, clone
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import OneHotEncoder, StandardScaler, LabelEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import StratifiedKFold, KFold, learning_curve
 from sklearn.feature_selection import VarianceThreshold, SelectKBest, f_classif, f_regression, mutual_info_classif, mutual_info_regression
@@ -21,7 +21,8 @@ from sklearn.metrics import (
 
 from sklearn.ensemble import (
     RandomForestClassifier, RandomForestRegressor,
-    GradientBoostingClassifier, GradientBoostingRegressor
+    GradientBoostingClassifier, GradientBoostingRegressor,
+    HistGradientBoostingClassifier, HistGradientBoostingRegressor
 )
 from sklearn.linear_model import LogisticRegression, LinearRegression, Ridge, Lasso
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
@@ -716,8 +717,8 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
         # Validate target - first check if original target is in df
         if original_target not in df.columns:
             # If not found as original, try the user-provided target directly (case-insensitive fallback)
-            case_insensitive_cols = {col.lower(): col for col in df.columns}
-            original_target = case_insensitive_cols.get(target.lower(), target)
+            case_insensitive_cols = {col.strip().lower(): col for col in df.columns}
+            original_target = case_insensitive_cols.get(target.strip().lower(), target)
             
             if original_target not in df.columns:
                 return {
@@ -834,6 +835,15 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
                 }
             # Always add LightGBM + XGBoost
             models.update(build_boosting_models(task, random_state, n_jobs))
+            
+            # ✅ FALLBACK for XLARGE datasets if boosting models are unavailable
+            if len(models) == 0:
+                print("[TRAINING] Boosting unavailable for XLARGE dataset. Using HistGradientBoosting/SGD fallback.")
+                models = {
+                    "HistGradientBoosting": HistGradientBoostingClassifier(random_state=random_state, class_weight=cw),
+                    "SGDClassifier": SGDClassifier(random_state=random_state, class_weight=cw, n_jobs=n_jobs),
+                    "DecisionTreeFast": DecisionTreeClassifier(random_state=random_state, max_depth=10, class_weight=cw)
+                }
         else:
             if len(X) <= XLARGE_THRESHOLD:
                 models = {
@@ -845,6 +855,25 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
                     "GradientBoosting": GradientBoostingRegressor(**model_configs.get("GradientBoosting", {})),
                 }
             models.update(build_boosting_models(task, random_state, n_jobs))
+
+            # ✅ FALLBACK for XLARGE datasets if boosting models are unavailable
+            if len(models) == 0:
+                print("[TRAINING] Boosting unavailable for XLARGE dataset. Using HistGradientBoosting/SGD fallback.")
+                models = {
+                    "HistGradientBoosting": HistGradientBoostingRegressor(random_state=random_state),
+                    "SGDRegressor": SGDRegressor(random_state=random_state),
+                    "DecisionTreeFast": DecisionTreeRegressor(random_state=random_state, max_depth=10)
+                }
+        
+        # ✅ FIX 10: ENCODE STRING TARGETS FOR XGBOOST/LIGHTGBM
+        class_mapping = None
+        if task == "classification":
+            # If target is string/object/categorical, encode to integers
+            if y.dtype == object or pd.api.types.is_categorical_dtype(y) or pd.api.types.is_bool_dtype(y):
+                le = LabelEncoder()
+                y_encoded = le.fit_transform(y)
+                class_mapping = {int(i): str(c) for i, c in enumerate(le.classes_)}
+                y = pd.Series(y_encoded, index=y.index, name=y.name)
         
         # ✅ FIX 1: SAFE STRATIFIED SPLIT (fallback on rare classes)
         if task == "classification":
@@ -1232,8 +1261,8 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
             except Exception:
                 pass
         
-        # ✅ LEARNING CURVES (skip for large datasets)
-        if len(X) <= 20000:
+        # ✅ LEARNING CURVES (allow for larger datasets up to 100k)
+        if len(X) <= 100000:
             print("[TRAINING] Computing learning curves...")
             learning_curves_data = compute_learning_curves(
                 production_pipe, X, y, task, random_state)
@@ -1288,6 +1317,7 @@ def train_model_logic(dataset_id: str, target: str, task: str = None, test_size:
             "raw_columns": list(X.columns),
             "dropped_id_columns": id_columns_original,
             "dropped_high_cardinality_columns": high_card_cols,
+            "class_mapping": class_mapping,
             "feature_defaults": extract_defaults(X),
             "feature_importance": importance_data,
             "top_features": importance_data["top_features"],
