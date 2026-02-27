@@ -131,7 +131,7 @@ with kpi_col2:
     """, unsafe_allow_html=True)
 
 with kpi_col3:
-    missing_data = eda_data.get('missing', {})
+    missing_data = eda_data.get('missing_data', {}).get('missing_by_column', {})
     missing_total = sum(missing_data.values()) if isinstance(missing_data, dict) else 0
     st.markdown(f"""
     <div class="step-card">
@@ -295,7 +295,7 @@ with tab_analytics:
 
         with quality_col1:
             # Safely calculate completeness
-            missing_data = eda_data.get('missing', {})
+            missing_data = eda_data.get('missing_data', {}).get('missing_by_column', {})
             rows = dataset_info.get('rows', 0)
             cols_data = dataset_info.get('columns', 0)
             # Handle columns as either list or int
@@ -310,7 +310,7 @@ with tab_analytics:
 
         with quality_col2:
             # Get numeric columns count
-            summary = eda_data.get('summary', {})
+            summary = eda_data.get('column_summaries', {})
             numeric_cols = sum(1 for v in summary.values() if v and isinstance(v, dict) and 'mean' in v)
             st.metric("Numeric Features", numeric_cols)
 
@@ -322,7 +322,7 @@ with tab_analytics:
         # Missing values visualization
         st.markdown("### 📊 **Missing Values Analysis**")
 
-        missing_data = eda_data.get('missing', {})
+        missing_data = eda_data.get('missing_data', {}).get('missing_by_column', {})
         if missing_data and isinstance(missing_data, dict):
             missing_df = pd.DataFrame(list(missing_data.items()), columns=['Column', 'Missing Count'])
             missing_df = missing_df[missing_df['Missing Count'] > 0].sort_values('Missing Count', ascending=False)
@@ -343,7 +343,7 @@ with tab_analytics:
         # Data types distribution from summary statistics
         st.markdown("### 🏷️ **Data Types Distribution**")
 
-        summary = eda_data.get('summary', {})
+        summary = eda_data.get('column_summaries', {})
         if summary:
             numeric_count = sum(1 for v in summary.values() if v and isinstance(v, dict) and 'mean' in v)
             categorical_count = sum(1 for v in summary.values() if v and isinstance(v, dict) and 'unique' in v)
